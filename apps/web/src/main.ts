@@ -227,6 +227,7 @@ function projectsPage() {
   const totalBytes = state.projects.reduce((sum, project) => sum + project.size, 0);
   const totalDuration = state.projects.reduce((sum, project) => sum + project.duration, 0);
   const visibleProjects = filteredProjects();
+  const hasCustomProjectView = state.projectSearch.trim() || state.projectFilter !== "all" || state.projectSort !== "newest";
   const stats = state.projects.length
     ? `<div class="mb-6 grid gap-3 sm:grid-cols-3">
         <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Projetos</span><span class="text-2xl font-bold text-white">${state.projects.length}</span></div>
@@ -235,10 +236,11 @@ function projectsPage() {
       </div>`
     : "";
   const controls = state.projects.length
-    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 lg:grid-cols-[1fr_180px_180px]">
+    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 lg:grid-cols-[1fr_180px_180px_auto]">
         <label class="field-label">Pesquisar<input id="projectSearch" class="input" value="${escapeAttr(state.projectSearch)}" placeholder="Titulo ou texto" autocomplete="off" /></label>
         <label class="field-label">Formato<select id="projectFilter" class="input">${option("all", "Todos", state.projectFilter)}${option("vertical", "9:16", state.projectFilter)}${option("square", "1:1", state.projectFilter)}${option("landscape", "16:9", state.projectFilter)}</select></label>
         <label class="field-label">Ordenar<select id="projectSort" class="input">${option("newest", "Mais recentes", state.projectSort)}${option("oldest", "Mais antigos", state.projectSort)}${option("largest", "Maior ficheiro", state.projectSort)}</select></label>
+        ${hasCustomProjectView ? `<button id="resetProjectView" class="secondary-button self-end justify-center" type="button">Limpar pesquisa</button>` : ""}
       </div>`
     : "";
   const content = state.projects.length
@@ -371,6 +373,9 @@ function bindSharedEvents() {
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
+  });
+  document.querySelector<HTMLButtonElement>("#resetProjectView")?.addEventListener("click", () => {
+    resetProjectView();
   });
   const projectSearch = document.querySelector<HTMLInputElement>("#projectSearch");
   const projectFilter = document.querySelector<HTMLSelectElement>("#projectFilter");
@@ -797,6 +802,14 @@ function confirmOrClearProjects() {
   }
 
   state.pendingClearProjects = true;
+  render();
+}
+
+function resetProjectView() {
+  state.projectSearch = "";
+  state.projectFilter = "all";
+  state.projectSort = "newest";
+  saveProjectView();
   render();
 }
 
