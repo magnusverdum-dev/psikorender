@@ -52,6 +52,9 @@ type State = {
   backgroundUrl?: string;
   renderedUrl?: string;
   renderedName?: string;
+  renderedMimeType?: string;
+  renderedSize?: number;
+  renderedDuration?: number;
   projects: ProjectRecord[];
   storageReady: boolean;
   status: string;
@@ -167,6 +170,7 @@ function createPage() {
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
           <a id="download" class="secondary-button hidden justify-center" download>Download do video</a>
+          <div id="resultSummary" class="hidden rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80"></div>
         </div>
       </div>
       <aside class="glass-panel mx-auto w-full max-w-[360px] p-4">
@@ -267,22 +271,27 @@ function bindCreateEvents() {
 
   title?.addEventListener("input", () => {
     state.title = title.value;
+    clearRenderedResult();
   });
   text?.addEventListener("input", () => {
     state.text = text.value;
+    clearRenderedResult();
     const preview = document.querySelector<HTMLDivElement>("#captionPreview");
     if (preview) preview.textContent = firstSentence(state.text);
   });
   format?.addEventListener("change", () => {
     state.format = format.value as VideoFormat;
+    clearRenderedResult();
     updatePreviewAspect();
   });
   template?.addEventListener("change", () => {
     state.template = template.value as RenderTemplate;
+    clearRenderedResult();
     updateTemplatePreview();
   });
   captionStyle?.addEventListener("change", () => {
     state.captionStyle = captionStyle.value as CaptionStyle;
+    clearRenderedResult();
   });
   audio?.addEventListener("change", () => {
     const file = audio.files?.[0];
@@ -316,6 +325,7 @@ function bindCreateEvents() {
 }
 
 function setAudioFile(file: File) {
+  clearRenderedResult();
   clearAudioUrl();
   state.audioFile = file;
   state.audioUrl = URL.createObjectURL(file);
@@ -323,6 +333,7 @@ function setAudioFile(file: File) {
 }
 
 function setBackgroundFile(file: File) {
+  clearRenderedResult();
   clearBackgroundUrl();
   state.backgroundFile = file;
   state.backgroundUrl = URL.createObjectURL(file);
@@ -330,6 +341,7 @@ function setBackgroundFile(file: File) {
 }
 
 function clearAudioFile() {
+  clearRenderedResult();
   clearAudioUrl();
   state.audioFile = undefined;
   state.audioUrl = undefined;
@@ -337,6 +349,7 @@ function clearAudioFile() {
 }
 
 function clearBackgroundFile() {
+  clearRenderedResult();
   clearBackgroundUrl();
   state.backgroundFile = undefined;
   state.backgroundUrl = undefined;
@@ -351,12 +364,23 @@ function clearBackgroundUrl() {
   if (state.backgroundUrl) URL.revokeObjectURL(state.backgroundUrl);
 }
 
+function clearRenderedResult() {
+  if (state.renderedUrl) URL.revokeObjectURL(state.renderedUrl);
+  state.renderedUrl = undefined;
+  state.renderedName = undefined;
+  state.renderedMimeType = undefined;
+  state.renderedSize = undefined;
+  state.renderedDuration = undefined;
+  refreshCreateUi();
+}
+
 function refreshCreateUi() {
   const audioLabel = document.querySelector("#audioLabel");
   const backgroundLabel = document.querySelector("#backgroundLabel");
   const audioPreview = document.querySelector<HTMLAudioElement>("#audioPreview");
   const backgroundPreview = document.querySelector<HTMLVideoElement>("#backgroundPreview");
   const download = document.querySelector<HTMLAnchorElement>("#download");
+  const resultSummary = document.querySelector<HTMLDivElement>("#resultSummary");
 
   if (audioLabel) audioLabel.textContent = state.audioFile ? `${state.audioFile.name} (${formatBytes(state.audioFile.size)})` : AUDIO_UPLOAD.label;
   if (backgroundLabel) {
@@ -377,6 +401,19 @@ function refreshCreateUi() {
     download.download = state.renderedName || "psikorender.webm";
     download.classList.remove("hidden");
     download.textContent = `Download ${state.renderedName || "video"}`;
+  } else if (download) {
+    download.removeAttribute("href");
+    download.classList.add("hidden");
+  }
+  if (resultSummary && state.renderedName && state.renderedSize && state.renderedDuration) {
+    resultSummary.classList.remove("hidden");
+    resultSummary.innerHTML = `
+      <span class="block font-semibold text-white">Resultado pronto</span>
+      <span class="mt-1 block">${escapeHtml(state.renderedName)} · ${formatBytes(state.renderedSize)} · ${formatDuration(state.renderedDuration)} · ${escapeHtml(displayMimeType(state.renderedMimeType || ""))}</span>
+    `;
+  } else if (resultSummary) {
+    resultSummary.classList.add("hidden");
+    resultSummary.textContent = "";
   }
   updatePreviewAspect();
   updateTemplatePreview();
@@ -412,6 +449,9 @@ async function generateVideo() {
     if (state.renderedUrl) URL.revokeObjectURL(state.renderedUrl);
     state.renderedUrl = URL.createObjectURL(result.blob);
     state.renderedName = safeFilename(state.title, result.extension);
+    state.renderedMimeType = result.blob.type || "video/webm";
+    state.renderedSize = result.blob.size;
+    state.renderedDuration = result.duration;
     await saveRenderedProject(result.blob, {
       id: crypto.randomUUID(),
       title: state.title.trim() || "Video sem titulo",
@@ -865,6 +905,12 @@ function formatDuration(seconds: number) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+function displayMimeType(value: string) {
+  if (value.includes("webm")) return "WebM";
+  if (value.includes("mp4")) return "MP4";
+  return value || "Video";
 }
 
 function validateUpload(
