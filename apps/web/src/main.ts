@@ -342,6 +342,9 @@ function createPage() {
           <div id="renderLog" class="rounded-md border border-white/10 bg-abyss/55 p-3 text-sm text-white/75">
             ${renderLogHtml()}
           </div>
+          <div id="exportReadiness" class="rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80">
+            ${exportReadinessHtml()}
+          </div>
           <a id="download" class="secondary-button hidden justify-center" download>Download do video</a>
           <div id="resultSummary" class="hidden rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80"></div>
         </div>
@@ -873,12 +876,14 @@ function bindCreateEvents() {
     if (preview) preview.textContent = firstSentence(state.text);
     updateSegmentEstimate();
     refreshDraftSegments();
+    updateExportReadiness();
   });
   format?.addEventListener("change", () => {
     state.format = format.value as VideoFormat;
     saveDraft();
     clearRenderedResult();
     updatePreviewAspect();
+    updateExportReadiness();
   });
   template?.addEventListener("change", () => {
     state.template = template.value as RenderTemplate;
@@ -1104,6 +1109,7 @@ function refreshCreateUi() {
     resultSummary.textContent = "";
   }
   if (renderLog) renderLog.innerHTML = renderLogHtml();
+  updateExportReadiness();
   updatePreviewAspect();
   updateTemplatePreview();
   setStatus(state.status || "Pronto para criar.", state.progress);
@@ -2289,6 +2295,44 @@ function renderLogHtml() {
     </div>
     <ol class="mt-3 grid gap-1 text-xs leading-5">${logs}</ol>
   `;
+}
+
+function updateExportReadiness() {
+  const panel = document.querySelector<HTMLDivElement>("#exportReadiness");
+  if (panel) panel.innerHTML = exportReadinessHtml();
+}
+
+function exportReadinessHtml() {
+  const { width, height } = dimensions(state.format);
+  const mimeType = preferredRenderMimeType();
+  const ready = Boolean(state.audioFile && state.backgroundFile && state.text.trim().length >= 10 && mimeType);
+  const rows = [
+    ["Formato", `${state.format} | ${width}x${height}`],
+    ["Container", mimeType ? displayMimeType(mimeType) : "Indisponivel"],
+    ["Duracao estimada", formatDuration(draftCaptionDuration())],
+    ["Audio", state.audioFile ? `${state.audioFile.name} | ${formatBytes(state.audioFile.size)}` : "Por carregar"],
+    ["Background", state.backgroundFile ? `${state.backgroundFile.name} | ${formatBytes(state.backgroundFile.size)}` : "Por carregar"],
+  ];
+
+  return `
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <span class="font-semibold text-white">Previsao de export</span>
+      <span class="rounded-md border border-white/10 bg-abyss/55 px-2 py-1 text-xs uppercase tracking-[0.16em] ${ready ? "text-aqua" : "text-sand"}">${ready ? "pronto" : "incompleto"}</span>
+    </div>
+    <div class="mt-3 grid gap-2 sm:grid-cols-2">
+      ${rows.map(([label, value]) => `
+        <div class="rounded-md bg-abyss/35 p-2">
+          <span class="block text-xs uppercase tracking-[0.14em] text-white/50">${escapeHtml(label)}</span>
+          <span class="mt-1 block break-words text-white">${escapeHtml(value)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function preferredRenderMimeType() {
+  if (!("MediaRecorder" in window)) return "";
+  return pickMimeType();
 }
 
 function firstSentence(text: string) {
