@@ -210,6 +210,15 @@ function createPage() {
 }
 
 function projectsPage() {
+  const totalBytes = state.projects.reduce((sum, project) => sum + project.size, 0);
+  const totalDuration = state.projects.reduce((sum, project) => sum + project.duration, 0);
+  const stats = state.projects.length
+    ? `<div class="mb-6 grid gap-3 sm:grid-cols-3">
+        <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Projetos</span><span class="text-2xl font-bold text-white">${state.projects.length}</span></div>
+        <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Storage local</span><span class="text-2xl font-bold text-white">${formatBytes(totalBytes)}</span></div>
+        <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Duracao total</span><span class="text-2xl font-bold text-white">${formatDuration(totalDuration)}</span></div>
+      </div>`
+    : "";
   const content = state.projects.length
     ? `<div class="grid gap-4 md:grid-cols-2">${state.projects.map(projectCard).join("")}</div>`
     : `<div class="glass-panel p-5 text-white/80">
@@ -224,6 +233,7 @@ function projectsPage() {
         <div><p class="text-sm uppercase tracking-[0.24em] text-aqua">Projetos</p><h1 class="mt-2 text-3xl font-bold">Historico local</h1></div>
         <button class="primary-button" data-nav="/create">Novo</button>
       </div>
+      ${stats}
       ${content}
     </section>
   `;
@@ -520,7 +530,7 @@ function refreshCreateUi() {
     resultSummary.classList.remove("hidden");
     resultSummary.innerHTML = `
       <span class="block font-semibold text-white">Resultado pronto</span>
-      <span class="mt-1 block">${escapeHtml(state.renderedName)} · ${formatBytes(state.renderedSize)} · ${formatDuration(state.renderedDuration)} · ${escapeHtml(displayMimeType(state.renderedMimeType || ""))}</span>
+      <span class="mt-1 block">${escapeHtml(state.renderedName)} | ${formatBytes(state.renderedSize)} | ${formatDuration(state.renderedDuration)} | ${escapeHtml(displayMimeType(state.renderedMimeType || ""))}</span>
     `;
   } else if (resultSummary) {
     resultSummary.classList.add("hidden");
