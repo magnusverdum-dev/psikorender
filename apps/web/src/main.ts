@@ -258,6 +258,7 @@ function projectsPage() {
       <div class="mb-6 flex items-center justify-between">
         <div><p class="text-sm uppercase tracking-[0.24em] text-aqua">Projetos</p><h1 class="mt-2 text-3xl font-bold">Historico local</h1></div>
         <div class="flex flex-wrap justify-end gap-3">
+          ${state.projects.length ? `<button class="secondary-button" id="exportProjects" type="button">Exportar JSON</button>` : ""}
           ${state.projects.length ? `<button class="secondary-button ${state.pendingClearProjects ? "border-sand/70 text-sand" : ""}" id="clearProjects">${state.pendingClearProjects ? "Confirmar limpar" : "Limpar historico"}</button>` : ""}
           <button class="primary-button" data-nav="/create">Novo</button>
         </div>
@@ -373,6 +374,9 @@ function bindSharedEvents() {
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
+  });
+  document.querySelector<HTMLButtonElement>("#exportProjects")?.addEventListener("click", () => {
+    exportProjectsJson();
   });
   document.querySelector<HTMLButtonElement>("#resetProjectView")?.addEventListener("click", () => {
     resetProjectView();
@@ -811,6 +815,37 @@ function resetProjectView() {
   state.projectSort = "newest";
   saveProjectView();
   render();
+}
+
+function exportProjectsJson() {
+  const payload = {
+    app: "PsikoRender",
+    exportedAt: new Date().toISOString(),
+    projectCount: state.projects.length,
+    totalBytes: state.projects.reduce((sum, project) => sum + project.size, 0),
+    projects: state.projects.map((project) => ({
+      id: project.id,
+      title: project.title,
+      text: project.text,
+      format: project.format,
+      template: project.template,
+      captionStyle: project.captionStyle,
+      filename: project.filename,
+      mimeType: project.mimeType,
+      size: project.size,
+      duration: project.duration,
+      createdAt: project.createdAt,
+    })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `psikorender-history-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function reuseProject(id: string) {
