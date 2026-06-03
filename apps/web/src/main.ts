@@ -44,6 +44,7 @@ type ProjectRecord = {
   size: number;
   duration: number;
   createdAt: string;
+  thumbnailUrl?: string;
   url?: string;
 };
 
@@ -233,6 +234,7 @@ function projectCard(project: ProjectRecord) {
   const disabled = project.url ? "" : "pointer-events-none opacity-60";
   return `
     <article class="glass-panel p-5 text-white/80">
+      ${project.thumbnailUrl ? `<img class="mb-4 aspect-video w-full rounded-md object-cover" src="${escapeAttr(project.thumbnailUrl)}" alt="Preview de ${escapeAttr(project.title)}" />` : ""}
       <div class="flex items-start justify-between gap-4">
         <div>
           <h2 class="text-xl font-semibold text-white">${escapeHtml(project.title)}</h2>
@@ -572,6 +574,7 @@ async function generateVideo() {
       mimeType: result.blob.type || "video/webm",
       size: result.blob.size,
       duration: result.duration,
+      thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
     });
@@ -669,6 +672,7 @@ async function renderClientVideo(options: {
     blob,
     extension: mimeType.includes("mp4") ? "mp4" : "webm",
     duration,
+    thumbnailUrl: canvas.toDataURL("image/jpeg", 0.78),
   };
 }
 
