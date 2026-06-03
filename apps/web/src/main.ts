@@ -3,6 +3,20 @@ import "./styles.css";
 type VideoFormat = "vertical" | "square" | "landscape";
 type CaptionStyle = "minimal" | "bold" | "karaoke_basic" | "manifesto";
 
+const AUDIO_UPLOAD = {
+  label: "WAV, MP3, M4A ou AAC ate 50 MB",
+  extensions: ["wav", "mp3", "m4a", "aac"],
+  mimePrefix: "audio/",
+  maxBytes: 50 * 1024 * 1024,
+};
+
+const BACKGROUND_UPLOAD = {
+  label: "MP4, MOV ou WEBM ate 200 MB",
+  extensions: ["mp4", "mov", "webm"],
+  mimePrefix: "video/",
+  maxBytes: 200 * 1024 * 1024,
+};
+
 type Segment = {
   text: string;
   start: number;
@@ -144,8 +158,8 @@ function createPage() {
             <label class="field-label">Legendas<select id="captionStyle" class="input">${option("minimal", "Minimal", state.captionStyle)}${option("bold", "Bold", state.captionStyle)}${option("karaoke_basic", "Karaoke basico", state.captionStyle)}${option("manifesto", "Manifesto", state.captionStyle)}</select></label>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
-            <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">WAV, MP3, M4A ou AAC</small></label>
-            <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">MP4, MOV ou WEBM</small></label>
+            <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
+            <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">${BACKGROUND_UPLOAD.label}</small></label>
           </div>
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
@@ -259,12 +273,28 @@ function bindCreateEvents() {
   audio?.addEventListener("change", () => {
     const file = audio.files?.[0];
     if (!file) return;
+    const error = validateUpload(file, AUDIO_UPLOAD);
+    if (error) {
+      clearAudioFile();
+      audio.value = "";
+      setStatus(error, 0);
+      return;
+    }
     setAudioFile(file);
+    setStatus("Audio carregado com sucesso.", state.progress);
   });
   background?.addEventListener("change", () => {
     const file = background.files?.[0];
     if (!file) return;
+    const error = validateUpload(file, BACKGROUND_UPLOAD);
+    if (error) {
+      clearBackgroundFile();
+      background.value = "";
+      setStatus(error, 0);
+      return;
+    }
     setBackgroundFile(file);
+    setStatus("Video de fundo carregado com sucesso.", state.progress);
   });
   generate?.addEventListener("click", () => {
     void generateVideo();
@@ -272,17 +302,39 @@ function bindCreateEvents() {
 }
 
 function setAudioFile(file: File) {
-  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+  clearAudioUrl();
   state.audioFile = file;
   state.audioUrl = URL.createObjectURL(file);
   refreshCreateUi();
 }
 
 function setBackgroundFile(file: File) {
-  if (state.backgroundUrl) URL.revokeObjectURL(state.backgroundUrl);
+  clearBackgroundUrl();
   state.backgroundFile = file;
   state.backgroundUrl = URL.createObjectURL(file);
   refreshCreateUi();
+}
+
+function clearAudioFile() {
+  clearAudioUrl();
+  state.audioFile = undefined;
+  state.audioUrl = undefined;
+  refreshCreateUi();
+}
+
+function clearBackgroundFile() {
+  clearBackgroundUrl();
+  state.backgroundFile = undefined;
+  state.backgroundUrl = undefined;
+  refreshCreateUi();
+}
+
+function clearAudioUrl() {
+  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+}
+
+function clearBackgroundUrl() {
+  if (state.backgroundUrl) URL.revokeObjectURL(state.backgroundUrl);
 }
 
 function refreshCreateUi() {
@@ -292,12 +344,19 @@ function refreshCreateUi() {
   const backgroundPreview = document.querySelector<HTMLVideoElement>("#backgroundPreview");
   const download = document.querySelector<HTMLAnchorElement>("#download");
 
-  if (audioLabel) audioLabel.textContent = state.audioFile ? state.audioFile.name : "WAV, MP3, M4A ou AAC";
-  if (backgroundLabel) backgroundLabel.textContent = state.backgroundFile ? state.backgroundFile.name : "MP4, MOV ou WEBM";
-  if (audioPreview && state.audioUrl) audioPreview.src = state.audioUrl;
+  if (audioLabel) audioLabel.textContent = state.audioFile ? `${state.audioFile.name} (${formatBytes(state.audioFile.size)})` : AUDIO_UPLOAD.label;
+  if (backgroundLabel) {
+    backgroundLabel.textContent = state.backgroundFile
+      ? `${state.backgroundFile.name} (${formatBytes(state.backgroundFile.size)})`
+      : BACKGROUND_UPLOAD.label;
+  }
+  if (audioPreview) audioPreview.src = state.audioUrl || "";
   if (backgroundPreview && state.backgroundUrl) {
     backgroundPreview.src = state.backgroundUrl;
     void backgroundPreview.play().catch(() => undefined);
+  } else if (backgroundPreview) {
+    backgroundPreview.removeAttribute("src");
+    backgroundPreview.load();
   }
   if (download && state.renderedUrl) {
     download.href = state.renderedUrl;
@@ -311,6 +370,10 @@ function refreshCreateUi() {
 
 async function generateVideo() {
   if (state.busy) return;
+  if (state.text.trim().length < 10) {
+    setStatus("Escreve pelo menos 10 caracteres de texto para gerar legendas.", 0);
+    return;
+  }
   if (!state.audioFile || !state.backgroundFile || !state.audioUrl || !state.backgroundUrl) {
     setStatus("Falta selecionar audio e video de fundo.", 0);
     return;
@@ -704,6 +767,23 @@ function formatDuration(seconds: number) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+function validateUpload(
+  file: File,
+  rules: { extensions: string[]; mimePrefix: string; maxBytes: number },
+) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (!rules.extensions.includes(extension)) {
+    return `Formato invalido: ${file.name}. Usa ${rules.extensions.map((item) => item.toUpperCase()).join(", ")}.`;
+  }
+  if (file.type && !file.type.startsWith(rules.mimePrefix) && !(extension === "mov" && file.type === "video/quicktime")) {
+    return `Tipo de ficheiro invalido: ${file.type}. Escolhe um ficheiro de media suportado.`;
+  }
+  if (file.size > rules.maxBytes) {
+    return `Ficheiro demasiado grande: ${formatBytes(file.size)}. Limite: ${formatBytes(rules.maxBytes)}.`;
+  }
+  return "";
 }
 
 function option(value: string, label: string, current: string) {
