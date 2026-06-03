@@ -79,6 +79,13 @@ type Segment = {
   end: number;
 };
 
+type SourceMediaAsset = {
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "audio" | "background";
+};
+
 type ProjectRecord = {
   id: string;
   title: string;
@@ -94,6 +101,8 @@ type ProjectRecord = {
   voiceProvider?: VoiceProvider;
   voiceName?: string;
   renderMode?: RenderMode;
+  audioAsset?: SourceMediaAsset;
+  backgroundAsset?: SourceMediaAsset;
   thumbnailUrl?: string;
   url?: string;
 };
@@ -407,8 +416,8 @@ function projectCard(project: ProjectRecord) {
       <p class="mt-4 line-clamp-3 text-sm leading-6">${escapeHtml(project.text)}</p>
       <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-white/70 sm:grid-cols-4">
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Estado</span>${project.url ? "Video guardado" : "So metadados"}</div>
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Media</span>${sourceMediaSummary(project)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Template</span>${escapeHtml(project.template)}</div>
-        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Tamanho</span>${formatBytes(project.size)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
       </div>
       <div class="mt-4 flex flex-wrap gap-3">
@@ -490,6 +499,7 @@ function projectDetailPage(id: string) {
           ${metadataRow("Tamanho", formatBytes(project.size))}
           ${metadataRow("Duracao", formatDuration(project.duration))}
         </div>
+        ${sourceMediaPanel(project)}
         <div class="mt-5 grid gap-3">
           <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
           <button class="secondary-button justify-center" data-edit-project="${escapeAttr(project.id)}">${isEditing ? "Fechar edicao" : "Editar metadados"}</button>
@@ -536,6 +546,38 @@ function metadataRow(label: string, value: string) {
     <div class="rounded-md border border-white/10 bg-white/10 p-3">
       <span class="block text-xs uppercase tracking-[0.18em] text-white/50">${escapeHtml(label)}</span>
       <span class="mt-1 block break-words text-white">${escapeHtml(value)}</span>
+    </div>
+  `;
+}
+
+function sourceMediaSummary(project: ProjectRecord) {
+  const labels = [
+    project.audioAsset ? "Audio" : "",
+    project.backgroundAsset ? "Background" : "",
+  ].filter(Boolean);
+  return labels.length ? labels.join(" + ") : "Nao definido";
+}
+
+function sourceMediaPanel(project: ProjectRecord) {
+  const assets = [project.audioAsset, project.backgroundAsset].filter(Boolean) as SourceMediaAsset[];
+  if (!assets.length) return "";
+
+  return `
+    <div class="mt-5 rounded-md border border-white/10 bg-white/10 p-4">
+      <h2 class="font-semibold text-white">Media de origem</h2>
+      <div class="mt-3 grid gap-3">
+        ${assets.map((asset) => sourceMediaRow(asset)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function sourceMediaRow(asset: SourceMediaAsset) {
+  return `
+    <div class="rounded-md border border-white/10 bg-abyss/45 p-3 text-sm">
+      <span class="block text-xs uppercase tracking-[0.16em] text-aqua">${asset.kind === "audio" ? "Audio" : "Background"}</span>
+      <span class="mt-1 block break-words text-white">${escapeHtml(asset.name)}</span>
+      <span class="mt-1 block text-white/65">${escapeHtml(displayMimeType(asset.mimeType))} | ${formatBytes(asset.size)}</span>
     </div>
   `;
 }
@@ -1084,6 +1126,8 @@ async function generateVideo() {
       voiceProvider: state.settings.voiceProvider,
       voiceName: state.settings.voiceName,
       renderMode: state.settings.renderMode,
+      audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
+      backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
@@ -1121,6 +1165,8 @@ async function saveDraftProject() {
     voiceProvider: state.settings.voiceProvider,
     voiceName: state.settings.voiceName,
     renderMode: state.settings.renderMode,
+    audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
+    backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
     createdAt: new Date().toISOString(),
   };
   project.size = new Blob([JSON.stringify(projectToMetadata(project), null, 2)], { type: "application/json" }).size;
@@ -1134,6 +1180,15 @@ async function saveDraftProject() {
   state.progress = 100;
   saveDraft();
   navigate(`/projects/${encodeURIComponent(project.id)}`);
+}
+
+function fileToSourceAsset(file: File, kind: SourceMediaAsset["kind"]): SourceMediaAsset {
+  return {
+    name: file.name,
+    mimeType: file.type || (kind === "audio" ? "audio/unknown" : "video/unknown"),
+    size: file.size,
+    kind,
+  };
 }
 
 async function renderClientVideo(options: {
@@ -1454,6 +1509,8 @@ function projectToMetadata(project: ProjectRecord) {
     voiceProvider: project.voiceProvider || defaultSettings.voiceProvider,
     voiceName: project.voiceName || defaultSettings.voiceName,
     renderMode: project.renderMode || defaultSettings.renderMode,
+    audioAsset: project.audioAsset,
+    backgroundAsset: project.backgroundAsset,
     createdAt: project.createdAt,
   };
 }
@@ -1493,6 +1550,8 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
   const voiceProvider = isVoiceProvider(item.voiceProvider) ? item.voiceProvider : defaultSettings.voiceProvider;
   const voiceName = typeof item.voiceName === "string" && item.voiceName.trim() ? item.voiceName : defaultSettings.voiceName;
   const renderMode = isRenderMode(item.renderMode) ? item.renderMode : defaultSettings.renderMode;
+  const audioAsset = normalizeSourceAsset(item.audioAsset, "audio");
+  const backgroundAsset = normalizeSourceAsset(item.backgroundAsset, "background");
 
   return {
     id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
@@ -1508,7 +1567,24 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
     voiceProvider,
     voiceName,
     renderMode,
+    audioAsset,
+    backgroundAsset,
     createdAt,
+  };
+}
+
+function normalizeSourceAsset(value: unknown, kind: SourceMediaAsset["kind"]): SourceMediaAsset | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Record<string, unknown>;
+  const name = typeof item.name === "string" && item.name.trim() ? item.name : "";
+  const mimeType = typeof item.mimeType === "string" && item.mimeType.trim() ? item.mimeType : "";
+  const size = typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0;
+  if (!name) return undefined;
+  return {
+    name,
+    mimeType: mimeType || (kind === "audio" ? "audio/unknown" : "video/unknown"),
+    size,
+    kind,
   };
 }
 
@@ -2180,6 +2256,10 @@ function formatDate(value: string) {
 function displayMimeType(value: string) {
   if (value.includes("webm")) return "WebM";
   if (value.includes("mp4")) return "MP4";
+  if (value.includes("wav")) return "WAV";
+  if (value.includes("mpeg") || value.includes("mp3")) return "MP3";
+  if (value.includes("aac")) return "AAC";
+  if (value.includes("m4a")) return "M4A";
   if (value.includes("json")) return "JSON";
   if (value.includes("metadata")) return "Metadados";
   return value || "Video";
