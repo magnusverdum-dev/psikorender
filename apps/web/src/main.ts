@@ -6,6 +6,8 @@ type RenderTemplate = "minimal" | "cinematic" | "manifesto";
 type ProjectFilter = "all" | VideoFormat;
 type ProjectSort = "newest" | "oldest" | "largest";
 type ScriptPresetId = "story" | "manifesto" | "calm";
+type VoiceProvider = "stub" | "xtts" | "f5" | "piper" | "openvoice";
+type RenderMode = "browser" | "backend";
 
 const AUDIO_UPLOAD = {
   label: "WAV, MP3, M4A ou AAC ate 50 MB",
@@ -27,6 +29,14 @@ const defaultDraft: DraftState = {
   format: "vertical",
   template: "minimal",
   captionStyle: "bold",
+};
+
+const defaultSettings: LocalSettings = {
+  voiceProvider: "stub",
+  voiceName: "Narrador local",
+  ollamaEndpoint: "http://localhost:11434",
+  ollamaModel: "llama3.1",
+  renderMode: "browser",
 };
 
 const scriptPresets: Array<{
@@ -93,6 +103,14 @@ type DraftState = {
   captionStyle: CaptionStyle;
 };
 
+type LocalSettings = {
+  voiceProvider: VoiceProvider;
+  voiceName: string;
+  ollamaEndpoint: string;
+  ollamaModel: string;
+  renderMode: RenderMode;
+};
+
 type State = {
   path: string;
   title: string;
@@ -125,11 +143,14 @@ type State = {
   renderJobId?: string;
   renderPhase: string;
   renderLogs: string[];
+  settings: LocalSettings;
+  settingsStatus: string;
   busy: boolean;
 };
 
 const savedDraft = loadDraft();
 const savedProjectView = loadProjectView();
+const savedSettings = loadSettings();
 
 const state: State = {
   path: window.location.pathname,
@@ -149,6 +170,8 @@ const state: State = {
   progress: 0,
   renderPhase: "idle",
   renderLogs: [],
+  settings: savedSettings,
+  settingsStatus: "",
   busy: false,
 };
 
@@ -523,9 +546,20 @@ function settingsPage() {
       <div class="glass-panel p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Settings</p>
         <h1 class="mt-2 text-3xl font-bold">Voz e modelos locais</h1>
-        <div class="mt-6 grid gap-3 sm:grid-cols-2">
-          ${["XTTS-v2", "F5-TTS", "Piper", "OpenVoice", "Ollama", "faster-whisper"].map((name) => `<div class="rounded-md border border-white/10 bg-white/10 p-4"><h2 class="font-semibold">${name}</h2><p class="mt-1 text-sm text-white/70">Preparado para integracao depois do MVP.</p></div>`).join("")}
-        </div>
+        <form id="settingsForm" class="mt-6 grid gap-4">
+          <label class="field-label">Provider de voz<select id="voiceProvider" class="input">${option("stub", "Upload manual", state.settings.voiceProvider)}${option("xtts", "XTTS-v2", state.settings.voiceProvider)}${option("f5", "F5-TTS", state.settings.voiceProvider)}${option("piper", "Piper", state.settings.voiceProvider)}${option("openvoice", "OpenVoice", state.settings.voiceProvider)}</select></label>
+          <label class="field-label">Nome da voz<input id="voiceName" class="input" value="${escapeAttr(state.settings.voiceName)}" autocomplete="off" /></label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="field-label">Ollama endpoint<input id="ollamaEndpoint" class="input" value="${escapeAttr(state.settings.ollamaEndpoint)}" autocomplete="off" /></label>
+            <label class="field-label">Modelo LLM<input id="ollamaModel" class="input" value="${escapeAttr(state.settings.ollamaModel)}" autocomplete="off" /></label>
+          </div>
+          <label class="field-label">Render<select id="renderMode" class="input">${option("browser", "Browser local", state.settings.renderMode)}${option("backend", "Backend futuro", state.settings.renderMode)}</select></label>
+          <div class="flex flex-wrap gap-3">
+            <button class="primary-button" type="submit">Guardar settings</button>
+            <button id="resetSettings" class="secondary-button" type="button">Repor defaults</button>
+          </div>
+          <p id="settingsStatus" class="rounded-md bg-white/10 p-3 text-sm text-white/80">${escapeHtml(state.settingsStatus || "Settings locais guardadas neste browser.")}</p>
+        </form>
       </div>
       <aside class="glass-panel p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Browser</p>
@@ -615,6 +649,16 @@ function bindSharedEvents() {
   document.querySelector<HTMLFormElement>("#projectEditForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveProjectMetadataEdit();
+  });
+  document.querySelector<HTMLFormElement>("#settingsForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveSettingsFromForm();
+  });
+  document.querySelector<HTMLButtonElement>("#resetSettings")?.addEventListener("click", () => {
+    state.settings = { ...defaultSettings };
+    state.settingsStatus = "Settings repostas.";
+    saveSettings();
+    render();
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
@@ -2038,6 +2082,46 @@ function saveDraft() {
   );
 }
 
+function saveSettingsFromForm() {
+  const voiceProvider = document.querySelector<HTMLSelectElement>("#voiceProvider")?.value;
+  const renderMode = document.querySelector<HTMLSelectElement>("#renderMode")?.value;
+  const voiceName = document.querySelector<HTMLInputElement>("#voiceName")?.value.trim();
+  const ollamaEndpoint = document.querySelector<HTMLInputElement>("#ollamaEndpoint")?.value.trim();
+  const ollamaModel = document.querySelector<HTMLInputElement>("#ollamaModel")?.value.trim();
+
+  state.settings = {
+    voiceProvider: isVoiceProvider(voiceProvider) ? voiceProvider : defaultSettings.voiceProvider,
+    voiceName: voiceName || defaultSettings.voiceName,
+    ollamaEndpoint: ollamaEndpoint || defaultSettings.ollamaEndpoint,
+    ollamaModel: ollamaModel || defaultSettings.ollamaModel,
+    renderMode: isRenderMode(renderMode) ? renderMode : defaultSettings.renderMode,
+  };
+  state.settingsStatus = "Settings guardadas.";
+  saveSettings();
+  render();
+}
+
+function loadSettings(): LocalSettings {
+  try {
+    const raw = localStorage.getItem("psikorender-local-settings");
+    if (!raw) return defaultSettings;
+    const parsed = JSON.parse(raw) as Partial<LocalSettings>;
+    return {
+      voiceProvider: isVoiceProvider(parsed.voiceProvider) ? parsed.voiceProvider : defaultSettings.voiceProvider,
+      voiceName: typeof parsed.voiceName === "string" && parsed.voiceName.trim() ? parsed.voiceName : defaultSettings.voiceName,
+      ollamaEndpoint: typeof parsed.ollamaEndpoint === "string" && parsed.ollamaEndpoint.trim() ? parsed.ollamaEndpoint : defaultSettings.ollamaEndpoint,
+      ollamaModel: typeof parsed.ollamaModel === "string" && parsed.ollamaModel.trim() ? parsed.ollamaModel : defaultSettings.ollamaModel,
+      renderMode: isRenderMode(parsed.renderMode) ? parsed.renderMode : defaultSettings.renderMode,
+    };
+  } catch {
+    return defaultSettings;
+  }
+}
+
+function saveSettings() {
+  localStorage.setItem("psikorender-local-settings", JSON.stringify(state.settings));
+}
+
 function isVideoFormat(value: unknown): value is VideoFormat {
   return value === "vertical" || value === "square" || value === "landscape";
 }
@@ -2054,6 +2138,14 @@ function parseRenderTemplate(value: unknown): RenderTemplate {
 
 function isCaptionStyle(value: unknown): value is CaptionStyle {
   return value === "minimal" || value === "bold" || value === "karaoke_basic" || value === "manifesto";
+}
+
+function isVoiceProvider(value: unknown): value is VoiceProvider {
+  return value === "stub" || value === "xtts" || value === "f5" || value === "piper" || value === "openvoice";
+}
+
+function isRenderMode(value: unknown): value is RenderMode {
+  return value === "browser" || value === "backend";
 }
 
 function loadProjectView() {
