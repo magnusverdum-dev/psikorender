@@ -221,7 +221,10 @@ function projectCard(project: ProjectRecord) {
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Tamanho</span>${formatBytes(project.size)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
       </div>
-      <a class="primary-button mt-4 inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+      <div class="mt-4 flex flex-wrap gap-3">
+        <a class="primary-button inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+        <button class="secondary-button" data-delete-project="${escapeAttr(project.id)}">Apagar</button>
+      </div>
     </article>
   `;
 }
@@ -243,6 +246,12 @@ function settingsPage() {
 function bindSharedEvents() {
   document.querySelectorAll<HTMLElement>("[data-nav]").forEach((el) => {
     el.addEventListener("click", () => navigate(el.dataset.nav || "/"));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-delete-project]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.deleteProject;
+      if (id) void deleteProject(id);
+    });
   });
 }
 
@@ -519,6 +528,14 @@ async function saveRenderedProject(blob: Blob, project: ProjectRecord) {
   state.projects = [project, ...state.projects.filter((item) => item.id !== project.id)].slice(0, 24);
 }
 
+async function deleteProject(id: string) {
+  const project = state.projects.find((item) => item.id === id);
+  if (project?.url) URL.revokeObjectURL(project.url);
+  await deleteStoredProject(id);
+  state.projects = state.projects.filter((item) => item.id !== id);
+  render();
+}
+
 async function loadProjectHistory() {
   try {
     state.projects = await listStoredProjects();
@@ -547,6 +564,17 @@ async function putStoredProject(project: ProjectRecord, blob: Blob) {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("projects", "readwrite");
     tx.objectStore("projects").put({ ...project, url: undefined, blob });
+    tx.addEventListener("complete", () => resolve());
+    tx.addEventListener("error", () => reject(tx.error));
+  });
+  db.close();
+}
+
+async function deleteStoredProject(id: string) {
+  const db = await openProjectDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    tx.objectStore("projects").delete(id);
     tx.addEventListener("complete", () => resolve());
     tx.addEventListener("error", () => reject(tx.error));
   });
