@@ -6,6 +6,7 @@ dist/
 *.log
 .turbo/
 .env
+test-fixtures/
 storage/uploads/*
 storage/generated_audio/*
 storage/generated_video/*
