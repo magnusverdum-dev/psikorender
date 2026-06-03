@@ -249,6 +249,7 @@ function projectCard(project: ProjectRecord) {
       </div>
       <div class="mt-4 flex flex-wrap gap-3">
         <a class="primary-button inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+        <button class="secondary-button" data-reuse-project="${escapeAttr(project.id)}">Reutilizar</button>
         <button class="secondary-button" data-delete-project="${escapeAttr(project.id)}">Apagar</button>
       </div>
     </article>
@@ -302,6 +303,12 @@ function bindSharedEvents() {
     button.addEventListener("click", () => {
       const id = button.dataset.deleteProject;
       if (id) void deleteProject(id);
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-reuse-project]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.reuseProject;
+      if (id) reuseProject(id);
     });
   });
 }
@@ -676,6 +683,28 @@ async function deleteProject(id: string) {
   await deleteStoredProject(id);
   state.projects = state.projects.filter((item) => item.id !== id);
   render();
+}
+
+function reuseProject(id: string) {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) return;
+
+  clearAudioUrl();
+  clearBackgroundUrl();
+  clearRenderedResult();
+  state.title = project.title;
+  state.text = project.text;
+  state.format = project.format;
+  state.template = project.template;
+  state.captionStyle = project.captionStyle;
+  state.audioFile = undefined;
+  state.backgroundFile = undefined;
+  state.audioUrl = undefined;
+  state.backgroundUrl = undefined;
+  state.status = "Projeto reutilizado. Carrega media ou usa a demo.";
+  state.progress = 0;
+  saveDraft();
+  navigate("/create");
 }
 
 async function loadProjectHistory() {
