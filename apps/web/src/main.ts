@@ -9,6 +9,20 @@ type Segment = {
   end: number;
 };
 
+type ProjectRecord = {
+  id: string;
+  title: string;
+  text: string;
+  format: VideoFormat;
+  captionStyle: CaptionStyle;
+  filename: string;
+  mimeType: string;
+  size: number;
+  duration: number;
+  createdAt: string;
+  url?: string;
+};
+
 type State = {
   path: string;
   title: string;
@@ -22,6 +36,8 @@ type State = {
   backgroundUrl?: string;
   renderedUrl?: string;
   renderedName?: string;
+  projects: ProjectRecord[];
+  storageReady: boolean;
   status: string;
   progress: number;
   busy: boolean;
@@ -34,6 +50,8 @@ const state: State = {
   format: "vertical",
   template: "minimal",
   captionStyle: "bold",
+  projects: [],
+  storageReady: false,
   status: "",
   progress: 0,
   busy: false,
@@ -148,21 +166,45 @@ function createPage() {
 }
 
 function projectsPage() {
-  const rendered = state.renderedUrl
-    ? `<a class="primary-button mt-4 inline-flex" href="${state.renderedUrl}" download="${escapeAttr(state.renderedName || "psikorender.webm")}">Download do ultimo render</a>`
-    : "";
+  const content = state.projects.length
+    ? `<div class="grid gap-4 md:grid-cols-2">${state.projects.map(projectCard).join("")}</div>`
+    : `<div class="glass-panel p-5 text-white/80">
+        <h2 class="text-xl font-semibold text-white">Ainda sem projetos</h2>
+        <p class="mt-2">${state.storageReady ? "Cria o primeiro video para aparecer aqui com download persistente." : "A carregar historico local..."}</p>
+        <button class="primary-button mt-4" data-nav="/create">Criar video</button>
+      </div>`;
+
   return `
     <section class="mx-auto w-full max-w-6xl px-5 pb-16 pt-6">
       <div class="mb-6 flex items-center justify-between">
         <div><p class="text-sm uppercase tracking-[0.24em] text-aqua">Projetos</p><h1 class="mt-2 text-3xl font-bold">Historico local</h1></div>
         <button class="primary-button" data-nav="/create">Novo</button>
       </div>
-      <div class="glass-panel p-5 text-white/80">
-        <h2 class="text-xl font-semibold text-white">${escapeHtml(state.title)}</h2>
-        <p class="mt-2">${state.renderedUrl ? "Ultimo video gerado nesta sessao." : "Ainda nao foi gerado nenhum video nesta sessao."}</p>
-        ${rendered}
-      </div>
+      ${content}
     </section>
+  `;
+}
+
+function projectCard(project: ProjectRecord) {
+  const href = project.url || "#";
+  const disabled = project.url ? "" : "pointer-events-none opacity-60";
+  return `
+    <article class="glass-panel p-5 text-white/80">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-semibold text-white">${escapeHtml(project.title)}</h2>
+          <p class="mt-1 text-sm">${formatDate(project.createdAt)}</p>
+        </div>
+        <span class="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-aqua">${escapeHtml(project.format)}</span>
+      </div>
+      <p class="mt-4 line-clamp-3 text-sm leading-6">${escapeHtml(project.text)}</p>
+      <div class="mt-4 grid grid-cols-3 gap-2 text-xs text-white/70">
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Legenda</span>${escapeHtml(project.captionStyle)}</div>
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Tamanho</span>${formatBytes(project.size)}</div>
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
+      </div>
+      <a class="primary-button mt-4 inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+    </article>
   `;
 }
 
@@ -291,6 +333,19 @@ async function generateVideo() {
     if (state.renderedUrl) URL.revokeObjectURL(state.renderedUrl);
     state.renderedUrl = URL.createObjectURL(result.blob);
     state.renderedName = safeFilename(state.title, result.extension);
+    await saveRenderedProject(result.blob, {
+      id: crypto.randomUUID(),
+      title: state.title.trim() || "Video sem titulo",
+      text: state.text.trim() || "PsikoRender",
+      format: state.format,
+      captionStyle: state.captionStyle,
+      filename: state.renderedName,
+      mimeType: result.blob.type || "video/webm",
+      size: result.blob.size,
+      duration: result.duration,
+      createdAt: new Date().toISOString(),
+      url: state.renderedUrl,
+    });
     setStatus("Video gerado com sucesso.", 100);
     refreshCreateUi();
   } catch (error) {
@@ -383,7 +438,63 @@ async function renderClientVideo(options: {
   return {
     blob,
     extension: mimeType.includes("mp4") ? "mp4" : "webm",
+    duration,
   };
+}
+
+async function saveRenderedProject(blob: Blob, project: ProjectRecord) {
+  await putStoredProject(project, blob);
+  state.projects = [project, ...state.projects.filter((item) => item.id !== project.id)].slice(0, 24);
+}
+
+async function loadProjectHistory() {
+  try {
+    state.projects = await listStoredProjects();
+  } catch {
+    state.projects = [];
+  } finally {
+    state.storageReady = true;
+    render();
+  }
+}
+
+function openProjectDb() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("psikorender-projects", 1);
+    request.addEventListener("upgradeneeded", () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("projects")) db.createObjectStore("projects", { keyPath: "id" });
+    });
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  });
+}
+
+async function putStoredProject(project: ProjectRecord, blob: Blob) {
+  const db = await openProjectDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    tx.objectStore("projects").put({ ...project, url: undefined, blob });
+    tx.addEventListener("complete", () => resolve());
+    tx.addEventListener("error", () => reject(tx.error));
+  });
+  db.close();
+}
+
+async function listStoredProjects() {
+  const db = await openProjectDb();
+  const rows = await new Promise<Array<ProjectRecord & { blob?: Blob }>>((resolve, reject) => {
+    const request = db.transaction("projects", "readonly").objectStore("projects").getAll();
+    request.addEventListener("success", () => resolve(request.result as Array<ProjectRecord & { blob?: Blob }>));
+    request.addEventListener("error", () => reject(request.error));
+  });
+  db.close();
+  return rows
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .map((row) => {
+      const { blob, ...project } = row;
+      return { ...project, url: blob ? URL.createObjectURL(blob) : undefined };
+    });
 }
 
 function captureElementStream(media: HTMLMediaElement) {
@@ -582,6 +693,19 @@ function safeFilename(title: string, extension: string) {
   return `${safe || "psikorender"}.${extension}`;
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(seconds: number) {
+  return `${Math.max(1, Math.round(seconds))}s`;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
 function option(value: string, label: string, current: string) {
   return `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`;
 }
@@ -602,3 +726,4 @@ function escapeAttr(value: string) {
 }
 
 render();
+void loadProjectHistory();
