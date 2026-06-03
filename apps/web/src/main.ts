@@ -166,6 +166,7 @@ function createPage() {
             <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
             <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">${BACKGROUND_UPLOAD.label}</small></label>
           </div>
+          <button id="demoMedia" class="secondary-button w-full justify-center" type="button">Usar media demo</button>
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
@@ -267,6 +268,7 @@ function bindCreateEvents() {
   const captionStyle = document.querySelector<HTMLSelectElement>("#captionStyle");
   const audio = document.querySelector<HTMLInputElement>("#audio");
   const background = document.querySelector<HTMLInputElement>("#background");
+  const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
 
   title?.addEventListener("input", () => {
@@ -319,6 +321,9 @@ function bindCreateEvents() {
     setBackgroundFile(file);
     setStatus("Video de fundo carregado com sucesso.", state.progress);
   });
+  demoMedia?.addEventListener("click", () => {
+    void useDemoMedia();
+  });
   generate?.addEventListener("click", () => {
     void generateVideo();
   });
@@ -338,6 +343,28 @@ function setBackgroundFile(file: File) {
   state.backgroundFile = file;
   state.backgroundUrl = URL.createObjectURL(file);
   refreshCreateUi();
+}
+
+async function useDemoMedia() {
+  if (state.busy) return;
+  setStatus("A criar media demo...", 8);
+  setBusy(true);
+
+  try {
+    const [audioFile, backgroundFile] = await Promise.all([createDemoAudioFile(), createDemoBackgroundFile()]);
+    setAudioFile(audioFile);
+    setBackgroundFile(backgroundFile);
+    if (state.title === "Primeiro video") state.title = "Demo PsikoRender";
+    if (state.text.startsWith("Escreve aqui")) {
+      state.text = "Demo PsikoRender pronta para testar. O video e o audio foram criados neste browser.";
+    }
+    render();
+    setStatus("Media demo carregada. Podes gerar o video.", 0);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Falha ao criar media demo.", 0);
+  } finally {
+    setBusy(false);
+  }
 }
 
 function clearAudioFile() {
@@ -647,6 +674,122 @@ function captureElementStream(media: HTMLMediaElement) {
   return stream;
 }
 
+async function createDemoAudioFile() {
+  const sampleRate = 44100;
+  const duration = 2.4;
+  const samples = Math.floor(sampleRate * duration);
+  const pcm = new Int16Array(samples);
+
+  for (let index = 0; index < samples; index += 1) {
+    const t = index / sampleRate;
+    const envelope = Math.min(1, t * 5, (duration - t) * 5);
+    const tone = Math.sin(2 * Math.PI * 220 * t) * 0.55 + Math.sin(2 * Math.PI * 330 * t) * 0.25;
+    pcm[index] = Math.max(-1, Math.min(1, tone * envelope)) * 0x7fff;
+  }
+
+  const blob = new Blob([wavHeader(samples, sampleRate), pcm], { type: "audio/wav" });
+  return new File([blob], "psikorender-demo-voice.wav", { type: "audio/wav" });
+}
+
+async function createDemoBackgroundFile() {
+  if (!("MediaRecorder" in window)) {
+    throw new Error("Este browser nao suporta criacao de video demo.");
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 720;
+  canvas.height = 1280;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Nao foi possivel criar canvas demo.");
+
+  const stream = canvas.captureStream(30);
+  const mimeType = pickBackgroundDemoMimeType();
+  const chunks: BlobPart[] = [];
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  });
+
+  const stopped = new Promise<void>((resolve) => recorder.addEventListener("stop", () => resolve(), { once: true }));
+  const startedAt = performance.now();
+  const durationMs = 2600;
+  let frame = 0;
+
+  const draw = () => {
+    const elapsed = performance.now() - startedAt;
+    const progress = Math.min(1, elapsed / durationMs);
+    drawDemoBackground(ctx, canvas.width, canvas.height, progress, frame);
+    frame += 1;
+    if (progress < 1) requestAnimationFrame(draw);
+    else recorder.stop();
+  };
+
+  recorder.start(250);
+  draw();
+  await stopped;
+
+  const blob = new Blob(chunks, { type: mimeType || "video/webm" });
+  if (blob.size === 0) throw new Error("O video demo ficou vazio.");
+  return new File([blob], "psikorender-demo-background.webm", { type: blob.type || "video/webm" });
+}
+
+function wavHeader(samples: number, sampleRate: number) {
+  const buffer = new ArrayBuffer(44);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples * 2, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, samples * 2, true);
+  return buffer;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+}
+
+function drawDemoBackground(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  progress: number,
+  frame: number,
+) {
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, "#082032");
+  gradient.addColorStop(0.45, "#0f3f50");
+  gradient.addColorStop(1, "#f0d9a7");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "rgba(103, 232, 249, 0.2)";
+  for (let index = 0; index < 7; index += 1) {
+    const x = ((index * 143 + frame * 7) % (width + 160)) - 80;
+    const y = height * (0.18 + index * 0.1) + Math.sin(progress * Math.PI * 2 + index) * 32;
+    ctx.beginPath();
+    ctx.arc(x, y, 62 + index * 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "rgba(8, 32, 50, 0.42)";
+  ctx.fillRect(0, height * 0.7, width, height * 0.3);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "800 54px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("PsikoRender", width / 2, height * 0.78);
+  ctx.font = "700 28px Arial";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.76)";
+  ctx.fillText("media demo local", width / 2, height * 0.82);
+}
+
 function drawFrame(
   ctx: CanvasRenderingContext2D,
   video: HTMLVideoElement,
@@ -826,6 +969,11 @@ function pickMimeType() {
     "video/webm",
     "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
   ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+}
+
+function pickBackgroundDemoMimeType() {
+  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
 }
 
