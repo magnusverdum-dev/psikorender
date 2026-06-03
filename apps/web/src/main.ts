@@ -235,8 +235,9 @@ function projectCard(project: ProjectRecord) {
 }
 
 function settingsPage() {
+  const capabilities = browserCapabilities();
   return `
-    <section class="mx-auto w-full max-w-4xl px-5 pb-16 pt-6">
+    <section class="mx-auto grid w-full max-w-5xl gap-6 px-5 pb-16 pt-6 lg:grid-cols-[1fr_360px]">
       <div class="glass-panel p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Settings</p>
         <h1 class="mt-2 text-3xl font-bold">Voz e modelos locais</h1>
@@ -244,7 +245,31 @@ function settingsPage() {
           ${["XTTS-v2", "F5-TTS", "Piper", "OpenVoice", "Ollama", "faster-whisper"].map((name) => `<div class="rounded-md border border-white/10 bg-white/10 p-4"><h2 class="font-semibold">${name}</h2><p class="mt-1 text-sm text-white/70">Preparado para integracao depois do MVP.</p></div>`).join("")}
         </div>
       </div>
+      <aside class="glass-panel p-6">
+        <p class="text-sm uppercase tracking-[0.24em] text-aqua">Browser</p>
+        <h2 class="mt-2 text-2xl font-bold">Diagnostico local</h2>
+        <div class="mt-5 grid gap-3">
+          ${capabilityRow("MediaRecorder", capabilities.mediaRecorder)}
+          ${capabilityRow("Canvas capture", capabilities.canvasCapture)}
+          ${capabilityRow("Audio capture", capabilities.audioCapture)}
+          ${capabilityRow("IndexedDB", capabilities.indexedDb)}
+          ${capabilityRow("WebM export", capabilities.webmExport)}
+        </div>
+        <div class="mt-5 rounded-md bg-white/10 p-4 text-sm text-white/75">
+          <span class="block font-semibold text-white">Export preferido</span>
+          <span>${escapeHtml(capabilities.preferredMime || "Nao detectado")}</span>
+        </div>
+      </aside>
     </section>
+  `;
+}
+
+function capabilityRow(label: string, ok: boolean) {
+  return `
+    <div class="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/10 p-3 text-sm">
+      <span class="font-medium text-white">${label}</span>
+      <span class="${ok ? "text-aqua" : "text-sand"}">${ok ? "OK" : "Falta"}</span>
+    </div>
   `;
 }
 
@@ -1059,6 +1084,25 @@ function displayMimeType(value: string) {
   if (value.includes("webm")) return "WebM";
   if (value.includes("mp4")) return "MP4";
   return value || "Video";
+}
+
+function browserCapabilities() {
+  const mediaRecorder = "MediaRecorder" in window;
+  const canvas = document.createElement("canvas") as HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream };
+  const audio = document.createElement("audio") as HTMLAudioElement & {
+    captureStream?: () => MediaStream;
+    mozCaptureStream?: () => MediaStream;
+  };
+  const preferredMime = mediaRecorder ? pickMimeType() : "";
+
+  return {
+    mediaRecorder,
+    canvasCapture: typeof canvas.captureStream === "function",
+    audioCapture: typeof audio.captureStream === "function" || typeof audio.mozCaptureStream === "function",
+    indexedDb: "indexedDB" in window,
+    webmExport: Boolean(preferredMime && preferredMime.includes("webm")),
+    preferredMime,
+  };
 }
 
 function validateUpload(
