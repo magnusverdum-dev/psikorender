@@ -77,6 +77,7 @@ type State = {
   projects: ProjectRecord[];
   projectFilter: ProjectFilter;
   projectSort: ProjectSort;
+  pendingDeleteId?: string;
   storageReady: boolean;
   status: string;
   progress: number;
@@ -112,6 +113,7 @@ window.addEventListener("popstate", () => {
 function navigate(path: string) {
   history.pushState(null, "", path);
   state.path = path;
+  state.pendingDeleteId = undefined;
   render();
 }
 
@@ -259,6 +261,7 @@ function projectsPage() {
 function projectCard(project: ProjectRecord) {
   const href = project.url || "#";
   const disabled = project.url ? "" : "pointer-events-none opacity-60";
+  const isPendingDelete = state.pendingDeleteId === project.id;
   return `
     <article class="glass-panel p-5 text-white/80">
       ${project.thumbnailUrl ? `<img class="mb-4 aspect-video w-full rounded-md object-cover" src="${escapeAttr(project.thumbnailUrl)}" alt="Preview de ${escapeAttr(project.title)}" />` : ""}
@@ -279,7 +282,7 @@ function projectCard(project: ProjectRecord) {
       <div class="mt-4 flex flex-wrap gap-3">
         <a class="primary-button inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
         <button class="secondary-button" data-reuse-project="${escapeAttr(project.id)}">Reutilizar</button>
-        <button class="secondary-button" data-delete-project="${escapeAttr(project.id)}">Apagar</button>
+        <button class="secondary-button ${isPendingDelete ? "border-sand/70 text-sand" : ""}" data-delete-project="${escapeAttr(project.id)}">${isPendingDelete ? "Confirmar apagar" : "Apagar"}</button>
       </div>
     </article>
   `;
@@ -344,7 +347,7 @@ function bindSharedEvents() {
   document.querySelectorAll<HTMLButtonElement>("[data-delete-project]").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset.deleteProject;
-      if (id) void deleteProject(id);
+      if (id) confirmOrDeleteProject(id);
     });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-reuse-project]").forEach((button) => {
@@ -738,6 +741,17 @@ async function deleteProject(id: string) {
   if (project?.url) URL.revokeObjectURL(project.url);
   await deleteStoredProject(id);
   state.projects = state.projects.filter((item) => item.id !== id);
+  state.pendingDeleteId = undefined;
+  render();
+}
+
+function confirmOrDeleteProject(id: string) {
+  if (state.pendingDeleteId === id) {
+    void deleteProject(id);
+    return;
+  }
+
+  state.pendingDeleteId = id;
   render();
 }
 
