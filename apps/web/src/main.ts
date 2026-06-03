@@ -317,6 +317,7 @@ function createPage() {
             <button id="exportDraftSrt" class="secondary-button w-full justify-center" type="button">Exportar SRT</button>
             <button id="exportDraftAss" class="secondary-button w-full justify-center" type="button">Exportar ASS</button>
           </div>
+          <button id="saveDraftProject" class="secondary-button w-full justify-center" type="button">Guardar projeto</button>
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
@@ -405,8 +406,8 @@ function projectCard(project: ProjectRecord) {
       </div>
       <p class="mt-4 line-clamp-3 text-sm leading-6">${escapeHtml(project.text)}</p>
       <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-white/70 sm:grid-cols-4">
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Estado</span>${project.url ? "Video guardado" : "So metadados"}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Template</span>${escapeHtml(project.template)}</div>
-        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Legenda</span>${escapeHtml(project.captionStyle)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Tamanho</span>${formatBytes(project.size)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
       </div>
@@ -778,6 +779,7 @@ function bindCreateEvents() {
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
   const clearDraft = document.querySelector<HTMLButtonElement>("#clearDraft");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
+  const saveDraftProjectButton = document.querySelector<HTMLButtonElement>("#saveDraftProject");
   const exportDraftSrt = document.querySelector<HTMLButtonElement>("#exportDraftSrt");
   const exportDraftAss = document.querySelector<HTMLButtonElement>("#exportDraftAss");
   const toggleDraftSegments = document.querySelector<HTMLButtonElement>("#toggleDraftSegments");
@@ -848,6 +850,9 @@ function bindCreateEvents() {
   });
   generate?.addEventListener("click", () => {
     void generateVideo();
+  });
+  saveDraftProjectButton?.addEventListener("click", () => {
+    void saveDraftProject();
   });
   exportDraftSrt?.addEventListener("click", () => {
     exportDraftCaptions("srt");
@@ -1093,6 +1098,42 @@ async function generateVideo() {
     state.busy = false;
     setBusy(false);
   }
+}
+
+async function saveDraftProject() {
+  if (state.busy) return;
+  if (state.text.trim().length < 10) {
+    setStatus("Escreve pelo menos 10 caracteres de texto para guardar o projeto.", 0);
+    return;
+  }
+
+  const project: ProjectRecord = {
+    id: crypto.randomUUID(),
+    title: state.title.trim() || "Projeto sem titulo",
+    text: state.text.trim() || "PsikoRender",
+    format: state.format,
+    template: state.template,
+    captionStyle: state.captionStyle,
+    filename: safeFilename(state.title || "projeto", "json"),
+    mimeType: "application/json",
+    size: 1,
+    duration: draftCaptionDuration(),
+    voiceProvider: state.settings.voiceProvider,
+    voiceName: state.settings.voiceName,
+    renderMode: state.settings.renderMode,
+    createdAt: new Date().toISOString(),
+  };
+  project.size = new Blob([JSON.stringify(projectToMetadata(project), null, 2)], { type: "application/json" }).size;
+
+  await putStoredProjectMetadata(project);
+  state.projects = [project, ...state.projects.filter((item) => item.id !== project.id)];
+  state.pendingDeleteId = undefined;
+  state.editingProjectId = undefined;
+  state.lastRenderedProjectId = undefined;
+  state.status = "Projeto guardado no historico local.";
+  state.progress = 100;
+  saveDraft();
+  navigate(`/projects/${encodeURIComponent(project.id)}`);
 }
 
 async function renderClientVideo(options: {
@@ -2021,9 +2062,12 @@ function updateTemplatePreview() {
 
 function setBusy(busy: boolean) {
   const button = document.querySelector<HTMLButtonElement>("#generate");
-  if (!button) return;
-  button.disabled = busy;
-  button.textContent = busy ? "A renderizar..." : "Gerar video";
+  const saveButton = document.querySelector<HTMLButtonElement>("#saveDraftProject");
+  if (button) {
+    button.disabled = busy;
+    button.textContent = busy ? "A renderizar..." : "Gerar video";
+  }
+  if (saveButton) saveButton.disabled = busy;
 }
 
 function setStatus(message: string, progress: number) {
@@ -2136,6 +2180,8 @@ function formatDate(value: string) {
 function displayMimeType(value: string) {
   if (value.includes("webm")) return "WebM";
   if (value.includes("mp4")) return "MP4";
+  if (value.includes("json")) return "JSON";
+  if (value.includes("metadata")) return "Metadados";
   return value || "Video";
 }
 
