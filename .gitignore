@@ -16,3 +16,4 @@ storage/captions/*
 !storage/generated_video/.gitkeep
 !storage/thumbnails/.gitkeep
 !storage/captions/.gitkeep
+.vercel
