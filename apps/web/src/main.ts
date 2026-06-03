@@ -4,6 +4,7 @@ type VideoFormat = "vertical" | "square" | "landscape";
 type CaptionStyle = "minimal" | "bold" | "karaoke_basic" | "manifesto";
 type RenderTemplate = "minimal" | "cinematic" | "manifesto";
 type ProjectFilter = "all" | VideoFormat;
+type ProjectStatusFilter = "all" | "video" | "metadata";
 type ProjectSort = "newest" | "oldest" | "largest";
 type ScriptPresetId = "story" | "manifesto" | "calm";
 type VoiceProvider = "stub" | "xtts" | "f5" | "piper" | "openvoice";
@@ -151,6 +152,7 @@ type State = {
   lastRenderedProjectId?: string;
   projects: ProjectRecord[];
   projectFilter: ProjectFilter;
+  projectStatusFilter: ProjectStatusFilter;
   projectSort: ProjectSort;
   projectSearch: string;
   pendingDeleteId?: string;
@@ -184,6 +186,7 @@ const state: State = {
   captionStyle: savedDraft.captionStyle,
   projects: [],
   projectFilter: savedProjectView.projectFilter,
+  projectStatusFilter: savedProjectView.projectStatusFilter,
   projectSort: savedProjectView.projectSort,
   projectSearch: savedProjectView.projectSearch,
   showDraftSegments: false,
@@ -366,7 +369,7 @@ function projectsPage() {
   const totalBytes = state.projects.reduce((sum, project) => sum + project.size, 0);
   const totalDuration = state.projects.reduce((sum, project) => sum + project.duration, 0);
   const visibleProjects = filteredProjects();
-  const hasCustomProjectView = state.projectSearch.trim() || state.projectFilter !== "all" || state.projectSort !== "newest";
+  const hasCustomProjectView = state.projectSearch.trim() || state.projectFilter !== "all" || state.projectStatusFilter !== "all" || state.projectSort !== "newest";
   const stats = state.projects.length
     ? `<div class="mb-6 grid gap-3 sm:grid-cols-3">
         <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Projetos</span><span class="text-2xl font-bold text-white">${state.projects.length}</span></div>
@@ -375,9 +378,10 @@ function projectsPage() {
       </div>`
     : "";
   const controls = state.projects.length
-    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 lg:grid-cols-[1fr_180px_180px_auto]">
+    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 lg:grid-cols-[1fr_160px_180px_180px_auto]">
         <label class="field-label">Pesquisar<input id="projectSearch" class="input" value="${escapeAttr(state.projectSearch)}" placeholder="Titulo ou texto" autocomplete="off" /></label>
         <label class="field-label">Formato<select id="projectFilter" class="input">${option("all", "Todos", state.projectFilter)}${option("vertical", "9:16", state.projectFilter)}${option("square", "1:1", state.projectFilter)}${option("landscape", "16:9", state.projectFilter)}</select></label>
+        <label class="field-label">Estado<select id="projectStatusFilter" class="input">${option("all", "Todos", state.projectStatusFilter)}${option("video", "Video guardado", state.projectStatusFilter)}${option("metadata", "So metadados", state.projectStatusFilter)}</select></label>
         <label class="field-label">Ordenar<select id="projectSort" class="input">${option("newest", "Mais recentes", state.projectSort)}${option("oldest", "Mais antigos", state.projectSort)}${option("largest", "Maior ficheiro", state.projectSort)}</select></label>
         ${hasCustomProjectView ? `<button id="resetProjectView" class="secondary-button self-end justify-center" type="button">Limpar pesquisa</button>` : ""}
       </div>`
@@ -624,9 +628,13 @@ function filteredProjects() {
     state.projectFilter === "all"
       ? [...state.projects]
       : state.projects.filter((project) => project.format === state.projectFilter);
+  const byStatus =
+    state.projectStatusFilter === "all"
+      ? byFormat
+      : byFormat.filter((project) => (state.projectStatusFilter === "video" ? Boolean(project.url) : !project.url));
   const filtered = search
-    ? byFormat.filter((project) => `${project.title} ${project.text}`.toLowerCase().includes(search))
-    : byFormat;
+    ? byStatus.filter((project) => `${project.title} ${project.text}`.toLowerCase().includes(search))
+    : byStatus;
 
   return filtered.sort((a, b) => {
     if (state.projectSort === "oldest") return Date.parse(a.createdAt) - Date.parse(b.createdAt);
@@ -828,6 +836,7 @@ function bindSharedEvents() {
   });
   const projectSearch = document.querySelector<HTMLInputElement>("#projectSearch");
   const projectFilter = document.querySelector<HTMLSelectElement>("#projectFilter");
+  const projectStatusFilter = document.querySelector<HTMLSelectElement>("#projectStatusFilter");
   const projectSort = document.querySelector<HTMLSelectElement>("#projectSort");
   projectSearch?.addEventListener("input", () => {
     state.projectSearch = projectSearch.value;
@@ -836,6 +845,11 @@ function bindSharedEvents() {
   });
   projectFilter?.addEventListener("change", () => {
     state.projectFilter = projectFilter.value as ProjectFilter;
+    saveProjectView();
+    render();
+  });
+  projectStatusFilter?.addEventListener("change", () => {
+    state.projectStatusFilter = projectStatusFilter.value as ProjectStatusFilter;
     saveProjectView();
     render();
   });
@@ -1379,6 +1393,7 @@ function confirmOrClearProjects() {
 function resetProjectView() {
   state.projectSearch = "";
   state.projectFilter = "all";
+  state.projectStatusFilter = "all";
   state.projectSort = "newest";
   saveProjectView();
   render();
@@ -2485,27 +2500,32 @@ function isRenderMode(value: unknown): value is RenderMode {
 function loadProjectView() {
   try {
     const raw = localStorage.getItem("psikorender-project-view");
-    if (!raw) return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
-    const parsed = JSON.parse(raw) as { projectFilter?: unknown; projectSort?: unknown; projectSearch?: unknown };
+    if (!raw) return { projectFilter: "all" as ProjectFilter, projectStatusFilter: "all" as ProjectStatusFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
+    const parsed = JSON.parse(raw) as { projectFilter?: unknown; projectStatusFilter?: unknown; projectSort?: unknown; projectSearch?: unknown };
     return {
       projectFilter: isProjectFilter(parsed.projectFilter) ? parsed.projectFilter : "all",
+      projectStatusFilter: isProjectStatusFilter(parsed.projectStatusFilter) ? parsed.projectStatusFilter : "all",
       projectSort: isProjectSort(parsed.projectSort) ? parsed.projectSort : "newest",
       projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : "",
     };
   } catch {
-    return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
+    return { projectFilter: "all" as ProjectFilter, projectStatusFilter: "all" as ProjectStatusFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
   }
 }
 
 function saveProjectView() {
   localStorage.setItem(
     "psikorender-project-view",
-    JSON.stringify({ projectFilter: state.projectFilter, projectSort: state.projectSort, projectSearch: state.projectSearch }),
+    JSON.stringify({ projectFilter: state.projectFilter, projectStatusFilter: state.projectStatusFilter, projectSort: state.projectSort, projectSearch: state.projectSearch }),
   );
 }
 
 function isProjectFilter(value: unknown): value is ProjectFilter {
   return value === "all" || isVideoFormat(value);
+}
+
+function isProjectStatusFilter(value: unknown): value is ProjectStatusFilter {
+  return value === "all" || value === "video" || value === "metadata";
 }
 
 function isProjectSort(value: unknown): value is ProjectSort {
