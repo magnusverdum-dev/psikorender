@@ -122,13 +122,27 @@ function navigate(path: string) {
   render();
 }
 
+function projectRouteId(path: string) {
+  const prefix = "/projects/";
+  if (!path.startsWith(prefix)) return "";
+  const id = path.slice(prefix.length);
+  try {
+    return decodeURIComponent(id);
+  } catch {
+    return id;
+  }
+}
+
 function render() {
   if (!app) return;
 
+  const projectId = projectRouteId(state.path);
   const page =
     state.path === "/create"
       ? createPage()
-      : state.path === "/projects"
+      : projectId
+        ? projectDetailPage(projectId)
+        : state.path === "/projects"
         ? projectsPage()
         : state.path === "/settings"
           ? settingsPage()
@@ -294,11 +308,85 @@ function projectCard(project: ProjectRecord) {
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
       </div>
       <div class="mt-4 flex flex-wrap gap-3">
+        <button class="secondary-button" data-nav="/projects/${encodeURIComponent(project.id)}">Abrir</button>
         <a class="primary-button inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
         <button class="secondary-button" data-reuse-project="${escapeAttr(project.id)}">Reutilizar</button>
         <button class="secondary-button ${isPendingDelete ? "border-sand/70 text-sand" : ""}" data-delete-project="${escapeAttr(project.id)}">${isPendingDelete ? "Confirmar apagar" : "Apagar"}</button>
       </div>
     </article>
+  `;
+}
+
+function projectDetailPage(id: string) {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) {
+    return `
+      <section class="mx-auto w-full max-w-4xl px-5 pb-16 pt-6">
+        <div class="glass-panel p-6 text-white/80">
+          <p class="text-sm uppercase tracking-[0.24em] text-aqua">Projeto</p>
+          <h1 class="mt-2 text-3xl font-bold text-white">${state.storageReady ? "Projeto nao encontrado" : "A carregar projeto"}</h1>
+          <p class="mt-3">${state.storageReady ? "Este item ja nao existe no historico local deste browser." : "O historico local ainda esta a abrir."}</p>
+          <button class="primary-button mt-5" data-nav="/projects">Voltar aos projetos</button>
+        </div>
+      </section>
+    `;
+  }
+
+  const href = project.url || "#";
+  const disabled = project.url ? "" : "pointer-events-none opacity-60";
+  const isPendingDelete = state.pendingDeleteId === project.id;
+  const media = project.url
+    ? `<video class="aspect-video w-full rounded-md bg-abyss object-contain" src="${escapeAttr(project.url)}" controls playsinline ${project.thumbnailUrl ? `poster="${escapeAttr(project.thumbnailUrl)}"` : ""}></video>`
+    : project.thumbnailUrl
+      ? `<img class="aspect-video w-full rounded-md object-cover" src="${escapeAttr(project.thumbnailUrl)}" alt="Preview de ${escapeAttr(project.title)}" />`
+      : `<div class="flex aspect-video items-center justify-center rounded-md border border-white/10 bg-white/10 text-center text-sm text-white/65">Projeto importado apenas com metadados</div>`;
+
+  return `
+    <section class="mx-auto grid w-full max-w-6xl gap-6 px-5 pb-16 pt-6 lg:grid-cols-[1fr_360px]">
+      <div class="glass-panel p-5">
+        <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p class="text-sm uppercase tracking-[0.24em] text-aqua">Projeto</p>
+            <h1 class="mt-2 text-3xl font-bold">${escapeHtml(project.title)}</h1>
+            <p class="mt-2 text-sm text-white/65">${formatDate(project.createdAt)}</p>
+          </div>
+          <button class="secondary-button" data-nav="/projects">Voltar</button>
+        </div>
+        ${media}
+        <div class="mt-5 rounded-md border border-white/10 bg-white/10 p-4">
+          <h2 class="font-semibold text-white">Texto</h2>
+          <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/80">${escapeHtml(project.text)}</p>
+        </div>
+      </div>
+      <aside class="glass-panel p-5">
+        <p class="text-sm uppercase tracking-[0.24em] text-aqua">Metadados</p>
+        <div class="mt-5 grid gap-3 text-sm text-white/75">
+          ${metadataRow("Estado", project.url ? "Video guardado" : "So metadados")}
+          ${metadataRow("Formato", project.format)}
+          ${metadataRow("Template", project.template)}
+          ${metadataRow("Legendas", project.captionStyle)}
+          ${metadataRow("Ficheiro", project.filename)}
+          ${metadataRow("Tipo", displayMimeType(project.mimeType))}
+          ${metadataRow("Tamanho", formatBytes(project.size))}
+          ${metadataRow("Duracao", formatDuration(project.duration))}
+        </div>
+        <div class="mt-5 grid gap-3">
+          <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+          <button class="secondary-button justify-center" data-reuse-project="${escapeAttr(project.id)}">Reutilizar no create</button>
+          <button class="secondary-button justify-center" data-export-project="${escapeAttr(project.id)}">Exportar JSON</button>
+          <button class="secondary-button justify-center ${isPendingDelete ? "border-sand/70 text-sand" : ""}" data-delete-project="${escapeAttr(project.id)}">${isPendingDelete ? "Confirmar apagar" : "Apagar projeto"}</button>
+        </div>
+      </aside>
+    </section>
+  `;
+}
+
+function metadataRow(label: string, value: string) {
+  return `
+    <div class="rounded-md border border-white/10 bg-white/10 p-3">
+      <span class="block text-xs uppercase tracking-[0.18em] text-white/50">${escapeHtml(label)}</span>
+      <span class="mt-1 block break-words text-white">${escapeHtml(value)}</span>
+    </div>
   `;
 }
 
@@ -372,6 +460,12 @@ function bindSharedEvents() {
     button.addEventListener("click", () => {
       const id = button.dataset.reuseProject;
       if (id) reuseProject(id);
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-export-project]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.exportProject;
+      if (id) exportProjectJson(id);
     });
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
@@ -784,6 +878,10 @@ async function deleteProject(id: string) {
   await deleteStoredProject(id);
   state.projects = state.projects.filter((item) => item.id !== id);
   state.pendingDeleteId = undefined;
+  if (projectRouteId(state.path) === id) {
+    history.pushState(null, "", "/projects");
+    state.path = "/projects";
+  }
   render();
 }
 
@@ -829,34 +927,48 @@ function resetProjectView() {
 }
 
 function exportProjectsJson() {
+  downloadProjectsJson(state.projects, `psikorender-history-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+function exportProjectJson(id: string) {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) return;
+  downloadProjectsJson([project], `${safeFilename(project.title, "json")}`);
+}
+
+function downloadProjectsJson(projects: ProjectRecord[], filename: string) {
   const payload = {
     app: "PsikoRender",
     exportedAt: new Date().toISOString(),
-    projectCount: state.projects.length,
-    totalBytes: state.projects.reduce((sum, project) => sum + project.size, 0),
-    projects: state.projects.map((project) => ({
-      id: project.id,
-      title: project.title,
-      text: project.text,
-      format: project.format,
-      template: project.template,
-      captionStyle: project.captionStyle,
-      filename: project.filename,
-      mimeType: project.mimeType,
-      size: project.size,
-      duration: project.duration,
-      createdAt: project.createdAt,
-    })),
+    projectCount: projects.length,
+    totalBytes: projects.reduce((sum, project) => sum + project.size, 0),
+    projects: projects.map(projectToMetadata),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `psikorender-history-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = filename;
   document.body.append(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function projectToMetadata(project: ProjectRecord) {
+  return {
+    id: project.id,
+    title: project.title,
+    text: project.text,
+    format: project.format,
+    template: project.template,
+    captionStyle: project.captionStyle,
+    filename: project.filename,
+    mimeType: project.mimeType,
+    size: project.size,
+    duration: project.duration,
+    createdAt: project.createdAt,
+  };
 }
 
 async function importProjectsJson(file: File) {
