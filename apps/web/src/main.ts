@@ -109,6 +109,7 @@ type State = {
   renderedMimeType?: string;
   renderedSize?: number;
   renderedDuration?: number;
+  lastRenderedProjectId?: string;
   projects: ProjectRecord[];
   projectFilter: ProjectFilter;
   projectSort: ProjectSort;
@@ -770,6 +771,7 @@ function clearRenderedResult() {
   state.renderedMimeType = undefined;
   state.renderedSize = undefined;
   state.renderedDuration = undefined;
+  state.lastRenderedProjectId = undefined;
   refreshCreateUi();
 }
 
@@ -810,7 +812,12 @@ function refreshCreateUi() {
     resultSummary.innerHTML = `
       <span class="block font-semibold text-white">Resultado pronto</span>
       <span class="mt-1 block">${escapeHtml(state.renderedName)} | ${formatBytes(state.renderedSize)} | ${formatDuration(state.renderedDuration)} | ${escapeHtml(displayMimeType(state.renderedMimeType || ""))}</span>
+      ${state.lastRenderedProjectId ? `<button class="secondary-button mt-3 justify-center" data-nav="/projects/${encodeURIComponent(state.lastRenderedProjectId)}">Abrir projeto</button>` : ""}
     `;
+    resultSummary.querySelector<HTMLButtonElement>("[data-nav]")?.addEventListener("click", (event) => {
+      const target = event.currentTarget as HTMLButtonElement;
+      navigate(target.dataset.nav || "/projects");
+    });
   } else if (resultSummary) {
     resultSummary.classList.add("hidden");
     resultSummary.textContent = "";
@@ -857,7 +864,7 @@ async function generateVideo() {
     state.renderedMimeType = result.blob.type || "video/webm";
     state.renderedSize = result.blob.size;
     state.renderedDuration = result.duration;
-    await saveRenderedProject(result.blob, {
+    const savedProject: ProjectRecord = {
       id: crypto.randomUUID(),
       title: state.title.trim() || "Video sem titulo",
       text: state.text.trim() || "PsikoRender",
@@ -871,7 +878,9 @@ async function generateVideo() {
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
-    });
+    };
+    await saveRenderedProject(result.blob, savedProject);
+    state.lastRenderedProjectId = savedProject.id;
     logRenderStep("completed", "Video gerado com sucesso e pronto para download.", 100);
     refreshCreateUi();
   } catch (error) {
