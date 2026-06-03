@@ -77,6 +77,7 @@ type State = {
   projects: ProjectRecord[];
   projectFilter: ProjectFilter;
   projectSort: ProjectSort;
+  projectSearch: string;
   pendingDeleteId?: string;
   pendingClearProjects: boolean;
   storageReady: boolean;
@@ -98,6 +99,7 @@ const state: State = {
   projects: [],
   projectFilter: savedProjectView.projectFilter,
   projectSort: savedProjectView.projectSort,
+  projectSearch: savedProjectView.projectSearch,
   pendingClearProjects: false,
   storageReady: false,
   status: "",
@@ -233,7 +235,8 @@ function projectsPage() {
       </div>`
     : "";
   const controls = state.projects.length
-    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 sm:grid-cols-2">
+    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 lg:grid-cols-[1fr_180px_180px]">
+        <label class="field-label">Pesquisar<input id="projectSearch" class="input" value="${escapeAttr(state.projectSearch)}" placeholder="Titulo ou texto" autocomplete="off" /></label>
         <label class="field-label">Formato<select id="projectFilter" class="input">${option("all", "Todos", state.projectFilter)}${option("vertical", "9:16", state.projectFilter)}${option("square", "1:1", state.projectFilter)}${option("landscape", "16:9", state.projectFilter)}</select></label>
         <label class="field-label">Ordenar<select id="projectSort" class="input">${option("newest", "Mais recentes", state.projectSort)}${option("oldest", "Mais antigos", state.projectSort)}${option("largest", "Maior ficheiro", state.projectSort)}</select></label>
       </div>`
@@ -241,7 +244,7 @@ function projectsPage() {
   const content = state.projects.length
     ? visibleProjects.length
       ? `<div class="grid gap-4 md:grid-cols-2">${visibleProjects.map(projectCard).join("")}</div>`
-      : `<div class="glass-panel p-5 text-white/80"><h2 class="text-xl font-semibold text-white">Sem resultados</h2><p class="mt-2">Nao ha projetos para este filtro.</p></div>`
+      : `<div class="glass-panel p-5 text-white/80"><h2 class="text-xl font-semibold text-white">Sem resultados</h2><p class="mt-2">Nao ha projetos para esta pesquisa ou filtro.</p></div>`
     : `<div class="glass-panel p-5 text-white/80">
         <h2 class="text-xl font-semibold text-white">Ainda sem projetos</h2>
         <p class="mt-2">${state.storageReady ? "Cria o primeiro video para aparecer aqui com download persistente." : "A carregar historico local..."}</p>
@@ -295,10 +298,14 @@ function projectCard(project: ProjectRecord) {
 }
 
 function filteredProjects() {
-  const filtered =
+  const search = state.projectSearch.trim().toLowerCase();
+  const byFormat =
     state.projectFilter === "all"
       ? [...state.projects]
       : state.projects.filter((project) => project.format === state.projectFilter);
+  const filtered = search
+    ? byFormat.filter((project) => `${project.title} ${project.text}`.toLowerCase().includes(search))
+    : byFormat;
 
   return filtered.sort((a, b) => {
     if (state.projectSort === "oldest") return Date.parse(a.createdAt) - Date.parse(b.createdAt);
@@ -365,8 +372,14 @@ function bindSharedEvents() {
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
   });
+  const projectSearch = document.querySelector<HTMLInputElement>("#projectSearch");
   const projectFilter = document.querySelector<HTMLSelectElement>("#projectFilter");
   const projectSort = document.querySelector<HTMLSelectElement>("#projectSort");
+  projectSearch?.addEventListener("input", () => {
+    state.projectSearch = projectSearch.value;
+    saveProjectView();
+    render();
+  });
   projectFilter?.addEventListener("change", () => {
     state.projectFilter = projectFilter.value as ProjectFilter;
     saveProjectView();
@@ -1323,21 +1336,22 @@ function isCaptionStyle(value: unknown): value is CaptionStyle {
 function loadProjectView() {
   try {
     const raw = localStorage.getItem("psikorender-project-view");
-    if (!raw) return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort };
-    const parsed = JSON.parse(raw) as { projectFilter?: unknown; projectSort?: unknown };
+    if (!raw) return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
+    const parsed = JSON.parse(raw) as { projectFilter?: unknown; projectSort?: unknown; projectSearch?: unknown };
     return {
       projectFilter: isProjectFilter(parsed.projectFilter) ? parsed.projectFilter : "all",
       projectSort: isProjectSort(parsed.projectSort) ? parsed.projectSort : "newest",
+      projectSearch: typeof parsed.projectSearch === "string" ? parsed.projectSearch : "",
     };
   } catch {
-    return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort };
+    return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort, projectSearch: "" };
   }
 }
 
 function saveProjectView() {
   localStorage.setItem(
     "psikorender-project-view",
-    JSON.stringify({ projectFilter: state.projectFilter, projectSort: state.projectSort }),
+    JSON.stringify({ projectFilter: state.projectFilter, projectSort: state.projectSort, projectSearch: state.projectSearch }),
   );
 }
 
