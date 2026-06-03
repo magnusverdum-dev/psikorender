@@ -91,6 +91,9 @@ type ProjectRecord = {
   size: number;
   duration: number;
   createdAt: string;
+  voiceProvider?: VoiceProvider;
+  voiceName?: string;
+  renderMode?: RenderMode;
   thumbnailUrl?: string;
   url?: string;
 };
@@ -472,6 +475,9 @@ function projectDetailPage(id: string) {
           ${metadataRow("Formato", project.format)}
           ${metadataRow("Template", project.template)}
           ${metadataRow("Legendas", project.captionStyle)}
+          ${metadataRow("Provider voz", displayVoiceProvider(project.voiceProvider))}
+          ${metadataRow("Voz", project.voiceName || defaultSettings.voiceName)}
+          ${metadataRow("Render", displayRenderMode(project.renderMode))}
           ${metadataRow("Ficheiro", project.filename)}
           ${metadataRow("Tipo", displayMimeType(project.mimeType))}
           ${metadataRow("Tamanho", formatBytes(project.size))}
@@ -503,6 +509,11 @@ function projectEditForm(project: ProjectRecord) {
           <label class="field-label">Formato<select id="editProjectFormat" class="input">${option("vertical", "9:16", project.format)}${option("square", "1:1", project.format)}${option("landscape", "16:9", project.format)}</select></label>
           <label class="field-label">Template<select id="editProjectTemplate" class="input">${option("minimal", "Minimal", project.template)}${option("cinematic", "Cinematic", project.template)}${option("manifesto", "Manifesto", project.template)}</select></label>
           <label class="field-label">Legendas<select id="editProjectCaptionStyle" class="input">${option("minimal", "Minimal", project.captionStyle)}${option("bold", "Bold", project.captionStyle)}${option("karaoke_basic", "Karaoke basico", project.captionStyle)}${option("manifesto", "Manifesto", project.captionStyle)}</select></label>
+        </div>
+        <div class="grid gap-4 md:grid-cols-3">
+          <label class="field-label">Provider voz<select id="editProjectVoiceProvider" class="input">${option("stub", "Upload manual", project.voiceProvider || defaultSettings.voiceProvider)}${option("xtts", "XTTS-v2", project.voiceProvider || defaultSettings.voiceProvider)}${option("f5", "F5-TTS", project.voiceProvider || defaultSettings.voiceProvider)}${option("piper", "Piper", project.voiceProvider || defaultSettings.voiceProvider)}${option("openvoice", "OpenVoice", project.voiceProvider || defaultSettings.voiceProvider)}</select></label>
+          <label class="field-label">Voz<input id="editProjectVoiceName" class="input" value="${escapeAttr(project.voiceName || defaultSettings.voiceName)}" autocomplete="off" /></label>
+          <label class="field-label">Render<select id="editProjectRenderMode" class="input">${option("browser", "Browser local", project.renderMode || defaultSettings.renderMode)}${option("backend", "Backend futuro", project.renderMode || defaultSettings.renderMode)}</select></label>
         </div>
         <div class="flex flex-wrap gap-3">
           <button class="primary-button" type="submit">Guardar metadados</button>
@@ -1007,6 +1018,9 @@ async function generateVideo() {
       mimeType: result.blob.type || "video/webm",
       size: result.blob.size,
       duration: result.duration,
+      voiceProvider: state.settings.voiceProvider,
+      voiceName: state.settings.voiceName,
+      renderMode: state.settings.renderMode,
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
@@ -1338,6 +1352,9 @@ function projectToMetadata(project: ProjectRecord) {
     mimeType: project.mimeType,
     size: project.size,
     duration: project.duration,
+    voiceProvider: project.voiceProvider || defaultSettings.voiceProvider,
+    voiceName: project.voiceName || defaultSettings.voiceName,
+    renderMode: project.renderMode || defaultSettings.renderMode,
     createdAt: project.createdAt,
   };
 }
@@ -1374,6 +1391,9 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
   const mimeType = typeof item.mimeType === "string" ? item.mimeType : "video/webm";
   const size = typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0;
   const duration = typeof item.duration === "number" && Number.isFinite(item.duration) ? Math.max(1, item.duration) : 1;
+  const voiceProvider = isVoiceProvider(item.voiceProvider) ? item.voiceProvider : defaultSettings.voiceProvider;
+  const voiceName = typeof item.voiceName === "string" && item.voiceName.trim() ? item.voiceName : defaultSettings.voiceName;
+  const renderMode = isRenderMode(item.renderMode) ? item.renderMode : defaultSettings.renderMode;
 
   return {
     id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
@@ -1386,6 +1406,9 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
     mimeType,
     size,
     duration,
+    voiceProvider,
+    voiceName,
+    renderMode,
     createdAt,
   };
 }
@@ -1455,6 +1478,9 @@ async function saveProjectMetadataEdit() {
   const formatValue = document.querySelector<HTMLSelectElement>("#editProjectFormat")?.value;
   const templateValue = document.querySelector<HTMLSelectElement>("#editProjectTemplate")?.value;
   const captionStyleValue = document.querySelector<HTMLSelectElement>("#editProjectCaptionStyle")?.value;
+  const voiceProviderValue = document.querySelector<HTMLSelectElement>("#editProjectVoiceProvider")?.value;
+  const voiceName = document.querySelector<HTMLInputElement>("#editProjectVoiceName")?.value.trim();
+  const renderModeValue = document.querySelector<HTMLSelectElement>("#editProjectRenderMode")?.value;
 
   const updated: ProjectRecord = {
     ...project,
@@ -1463,6 +1489,9 @@ async function saveProjectMetadataEdit() {
     format: isVideoFormat(formatValue) ? formatValue : project.format,
     template: isRenderTemplate(templateValue) ? templateValue : project.template,
     captionStyle: isCaptionStyle(captionStyleValue) ? captionStyleValue : project.captionStyle,
+    voiceProvider: isVoiceProvider(voiceProviderValue) ? voiceProviderValue : project.voiceProvider || defaultSettings.voiceProvider,
+    voiceName: voiceName || project.voiceName || defaultSettings.voiceName,
+    renderMode: isRenderMode(renderModeValue) ? renderModeValue : project.renderMode || defaultSettings.renderMode,
     filename: title === project.title ? project.filename : safeFilename(title, project.filename.split(".").pop() || "webm"),
   };
 
@@ -2050,6 +2079,19 @@ function displayMimeType(value: string) {
   if (value.includes("webm")) return "WebM";
   if (value.includes("mp4")) return "MP4";
   return value || "Video";
+}
+
+function displayVoiceProvider(value: VoiceProvider | undefined) {
+  const provider = value || defaultSettings.voiceProvider;
+  if (provider === "stub") return "Upload manual";
+  if (provider === "xtts") return "XTTS-v2";
+  if (provider === "f5") return "F5-TTS";
+  if (provider === "piper") return "Piper";
+  return "OpenVoice";
+}
+
+function displayRenderMode(value: RenderMode | undefined) {
+  return (value || defaultSettings.renderMode) === "backend" ? "Backend futuro" : "Browser local";
 }
 
 function loadDraft(): DraftState {
