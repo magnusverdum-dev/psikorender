@@ -113,6 +113,7 @@ type ProjectRecord = {
   audioAsset?: SourceMediaAsset;
   backgroundAsset?: SourceMediaAsset;
   renderJob?: RenderJobSnapshot;
+  captionSegments?: Segment[];
   thumbnailUrl?: string;
   url?: string;
 };
@@ -495,7 +496,7 @@ function projectDetailPage(id: string) {
             <button class="secondary-button px-3 py-2 text-sm" type="button" data-toggle-project-segments="${escapeAttr(project.id)}">${showSegments ? "Esconder segmentos" : "Ver segmentos"}</button>
           </div>
           <div class="${showSegments ? "mt-3" : "hidden"}">
-            ${showSegments ? captionSegmentsHtml(project.text, project.duration) : ""}
+            ${showSegments ? captionSegmentsHtml(project.text, project.duration, project.captionSegments) : ""}
           </div>
         </div>
         ${isEditing ? projectEditForm(project) : ""}
@@ -1182,6 +1183,7 @@ async function generateVideo() {
       audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
       backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
       renderJob: currentRenderJobSnapshot("rendering", state.progress),
+      captionSegments: buildSegments(state.text.trim() || "PsikoRender", result.duration),
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
@@ -1224,6 +1226,7 @@ async function saveDraftProject() {
     renderMode: state.settings.renderMode,
     audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
     backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
+    captionSegments: buildSegments(state.text.trim() || "PsikoRender", draftCaptionDuration()),
     createdAt: new Date().toISOString(),
   };
   project.size = new Blob([JSON.stringify(projectToMetadata(project), null, 2)], { type: "application/json" }).size;
@@ -1430,6 +1433,7 @@ function exportProjectCaptions(id: string, format: CaptionExportFormat) {
     duration: project.duration,
     style: project.captionStyle,
     format,
+    segments: project.captionSegments,
   });
 }
 
@@ -1464,8 +1468,9 @@ function downloadCaptions(options: {
   duration: number;
   style: CaptionStyle;
   format: CaptionExportFormat;
+  segments?: Segment[];
 }) {
-  const segments = buildSegments(options.text, Math.max(1, options.duration));
+  const segments = options.segments?.length ? options.segments : buildSegments(options.text, Math.max(1, options.duration));
   const content =
     options.format === "srt"
       ? buildSrt(segments)
@@ -1570,6 +1575,7 @@ function projectToMetadata(project: ProjectRecord) {
     audioAsset: project.audioAsset,
     backgroundAsset: project.backgroundAsset,
     renderJob: project.renderJob,
+    captionSegments: project.captionSegments?.length ? project.captionSegments : buildSegments(project.text, Math.max(1, project.duration)),
     createdAt: project.createdAt,
   };
 }
@@ -1612,6 +1618,7 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
   const audioAsset = normalizeSourceAsset(item.audioAsset, "audio");
   const backgroundAsset = normalizeSourceAsset(item.backgroundAsset, "background");
   const renderJob = normalizeRenderJob(item.renderJob);
+  const captionSegments = normalizeCaptionSegments(item.captionSegments) || buildSegments(item.text, Math.max(1, duration));
 
   return {
     id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
@@ -1630,6 +1637,7 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
     audioAsset,
     backgroundAsset,
     renderJob,
+    captionSegments,
     createdAt,
   };
 }
@@ -1661,6 +1669,22 @@ function normalizeRenderJob(value: unknown): RenderJobSnapshot | undefined {
     : [];
   const completedAt = typeof item.completedAt === "string" ? item.completedAt : undefined;
   return { id, status, progress, logs, completedAt };
+}
+
+function normalizeCaptionSegments(value: unknown): Segment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const segments = value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return undefined;
+      const item = entry as Record<string, unknown>;
+      const text = typeof item.text === "string" ? item.text.trim() : "";
+      const start = typeof item.start === "number" && Number.isFinite(item.start) ? Math.max(0, item.start) : undefined;
+      const end = typeof item.end === "number" && Number.isFinite(item.end) ? Math.max(0, item.end) : undefined;
+      if (!text || start === undefined || end === undefined || end <= start) return undefined;
+      return { text, start, end };
+    })
+    .filter(Boolean) as Segment[];
+  return segments.length ? segments.slice(0, 80) : undefined;
 }
 
 function reuseProject(id: string) {
@@ -1743,6 +1767,7 @@ async function saveProjectMetadataEdit() {
     voiceName: voiceName || project.voiceName || defaultSettings.voiceName,
     renderMode: isRenderMode(renderModeValue) ? renderModeValue : project.renderMode || defaultSettings.renderMode,
     filename: title === project.title ? project.filename : safeFilename(title, project.filename.split(".").pop() || "webm"),
+    captionSegments: buildSegments(text, Math.max(1, project.duration)),
   };
 
   await updateStoredProjectMetadata(updated);
@@ -2240,8 +2265,8 @@ function draftCaptionDuration() {
   return state.renderedDuration || estimateDraftCaptionDuration(state.text);
 }
 
-function captionSegmentsHtml(text: string, duration: number) {
-  const segments = buildSegments(text, Math.max(1, duration));
+function captionSegmentsHtml(text: string, duration: number, storedSegments?: Segment[]) {
+  const segments = storedSegments?.length ? storedSegments : buildSegments(text, Math.max(1, duration));
   return `
     <div class="grid gap-2">
       ${segments.map((segment, index) => `
