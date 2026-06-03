@@ -2,6 +2,7 @@ import "./styles.css";
 
 type VideoFormat = "vertical" | "square" | "landscape";
 type CaptionStyle = "minimal" | "bold" | "karaoke_basic" | "manifesto";
+type RenderTemplate = "minimal" | "cinematic" | "manifesto";
 
 const AUDIO_UPLOAD = {
   label: "WAV, MP3, M4A ou AAC ate 50 MB",
@@ -28,6 +29,7 @@ type ProjectRecord = {
   title: string;
   text: string;
   format: VideoFormat;
+  template: RenderTemplate;
   captionStyle: CaptionStyle;
   filename: string;
   mimeType: string;
@@ -42,7 +44,7 @@ type State = {
   title: string;
   text: string;
   format: VideoFormat;
-  template: string;
+  template: RenderTemplate;
   captionStyle: CaptionStyle;
   audioFile?: File;
   backgroundFile?: File;
@@ -168,8 +170,9 @@ function createPage() {
         </div>
       </div>
       <aside class="glass-panel mx-auto w-full max-w-[360px] p-4">
-        <div id="previewFrame" class="relative mx-auto aspect-[9/16] w-full overflow-hidden rounded-md bg-abyss/80">
+        <div id="previewFrame" class="relative mx-auto aspect-[9/16] w-full overflow-hidden rounded-md bg-abyss/80" data-template="${state.template}">
           <video id="backgroundPreview" class="h-full w-full object-cover" muted loop playsinline></video>
+          <div id="templatePreview" class="pointer-events-none absolute inset-0"></div>
           <div class="absolute inset-x-5 bottom-16 rounded-md border border-white/10 bg-black/35 p-4 text-center text-2xl font-black uppercase leading-tight" id="captionPreview">${escapeHtml(firstSentence(state.text))}</div>
           <div class="absolute left-5 top-5 text-xs uppercase tracking-[0.22em] text-aqua">Preview</div>
         </div>
@@ -212,7 +215,8 @@ function projectCard(project: ProjectRecord) {
         <span class="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-aqua">${escapeHtml(project.format)}</span>
       </div>
       <p class="mt-4 line-clamp-3 text-sm leading-6">${escapeHtml(project.text)}</p>
-      <div class="mt-4 grid grid-cols-3 gap-2 text-xs text-white/70">
+      <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-white/70 sm:grid-cols-4">
+        <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Template</span>${escapeHtml(project.template)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Legenda</span>${escapeHtml(project.captionStyle)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Tamanho</span>${formatBytes(project.size)}</div>
         <div class="rounded-md bg-white/10 p-3"><span class="block text-white">Duracao</span>${formatDuration(project.duration)}</div>
@@ -265,7 +269,8 @@ function bindCreateEvents() {
     updatePreviewAspect();
   });
   template?.addEventListener("change", () => {
-    state.template = template.value;
+    state.template = template.value as RenderTemplate;
+    updateTemplatePreview();
   });
   captionStyle?.addEventListener("change", () => {
     state.captionStyle = captionStyle.value as CaptionStyle;
@@ -365,6 +370,7 @@ function refreshCreateUi() {
     download.textContent = `Download ${state.renderedName || "video"}`;
   }
   updatePreviewAspect();
+  updateTemplatePreview();
   setStatus(state.status || "Pronto para criar.", state.progress);
 }
 
@@ -389,6 +395,7 @@ async function generateVideo() {
       backgroundUrl: state.backgroundUrl,
       text: state.text,
       format: state.format,
+      template: state.template,
       style: state.captionStyle,
       onProgress: (progress) => setStatus(`A renderizar... ${Math.round(progress)}%`, progress),
     });
@@ -401,6 +408,7 @@ async function generateVideo() {
       title: state.title.trim() || "Video sem titulo",
       text: state.text.trim() || "PsikoRender",
       format: state.format,
+      template: state.template,
       captionStyle: state.captionStyle,
       filename: state.renderedName,
       mimeType: result.blob.type || "video/webm",
@@ -424,6 +432,7 @@ async function renderClientVideo(options: {
   backgroundUrl: string;
   text: string;
   format: VideoFormat;
+  template: RenderTemplate;
   style: CaptionStyle;
   onProgress: (progress: number) => void;
 }) {
@@ -467,7 +476,7 @@ async function renderClientVideo(options: {
   let animationFrame = 0;
 
   const draw = () => {
-    drawFrame(ctx, video, width, height, segments, audio.currentTime, options.style);
+    drawFrame(ctx, video, width, height, segments, audio.currentTime, options.style, options.template);
     options.onProgress(Math.min(99, (audio.currentTime / duration) * 100));
     if (!audio.ended && !audio.paused) {
       animationFrame = requestAnimationFrame(draw);
@@ -488,7 +497,7 @@ async function renderClientVideo(options: {
   ]);
 
   cancelAnimationFrame(animationFrame);
-  drawFrame(ctx, video, width, height, segments, duration, options.style);
+  drawFrame(ctx, video, width, height, segments, duration, options.style, options.template);
   recorder.requestData();
   recorder.stop();
   video.pause();
@@ -556,7 +565,7 @@ async function listStoredProjects() {
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .map((row) => {
       const { blob, ...project } = row;
-      return { ...project, url: blob ? URL.createObjectURL(blob) : undefined };
+      return { ...project, template: project.template || "minimal", url: blob ? URL.createObjectURL(blob) : undefined };
     });
 }
 
@@ -578,8 +587,10 @@ function drawFrame(
   segments: Segment[],
   time: number,
   style: CaptionStyle,
+  template: RenderTemplate,
 ) {
   drawCover(ctx, video, width, height);
+  drawTemplateOverlay(ctx, width, height, template);
   const segment = segments.find((item) => time >= item.start && time <= item.end) || segments.at(-1);
   if (!segment) return;
 
@@ -591,6 +602,14 @@ function drawFrame(
   const y = height - Math.max(height * 0.13, blockHeight + 80);
 
   ctx.save();
+  if (template === "manifesto") {
+    const panelHeight = blockHeight + fontSize * 1.2;
+    ctx.fillStyle = "rgba(8, 32, 50, 0.72)";
+    ctx.fillRect(width * 0.07, y - fontSize * 0.75, width * 0.86, panelHeight);
+    ctx.strokeStyle = "rgba(240, 217, 167, 0.9)";
+    ctx.lineWidth = Math.max(4, width * 0.006);
+    ctx.strokeRect(width * 0.07, y - fontSize * 0.75, width * 0.86, panelHeight);
+  }
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = `${style === "minimal" ? 700 : 900} ${fontSize}px Arial`;
@@ -618,6 +637,36 @@ function drawCover(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, width
   const x = (width - drawWidth) / 2;
   const y = (height - drawHeight) / 2;
   ctx.drawImage(video, x, y, drawWidth, drawHeight);
+}
+
+function drawTemplateOverlay(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  template: RenderTemplate,
+) {
+  if (template === "minimal") return;
+
+  ctx.save();
+  if (template === "cinematic") {
+    const gradient = ctx.createRadialGradient(width / 2, height / 2, width * 0.15, width / 2, height / 2, width * 0.85);
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0.52)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(8, 32, 50, 0.38)";
+    const bar = Math.max(42, height * 0.045);
+    ctx.fillRect(0, 0, width, bar);
+    ctx.fillRect(0, height - bar, width, bar);
+  }
+  if (template === "manifesto") {
+    ctx.fillStyle = "rgba(8, 32, 50, 0.2)";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(240, 217, 167, 0.22)";
+    ctx.fillRect(0, 0, width, Math.max(14, height * 0.012));
+    ctx.fillRect(0, height - Math.max(14, height * 0.012), width, Math.max(14, height * 0.012));
+  }
+  ctx.restore();
 }
 
 function buildSegments(text: string, duration: number): Segment[] {
@@ -725,6 +774,27 @@ function updatePreviewAspect() {
   if (state.format === "square") frame.classList.add("aspect-square");
   else if (state.format === "landscape") frame.classList.add("aspect-video");
   else frame.classList.add("aspect-[9/16]");
+}
+
+function updateTemplatePreview() {
+  const frame = document.querySelector<HTMLDivElement>("#previewFrame");
+  const overlay = document.querySelector<HTMLDivElement>("#templatePreview");
+  const caption = document.querySelector<HTMLDivElement>("#captionPreview");
+  if (!frame || !overlay || !caption) return;
+
+  frame.dataset.template = state.template;
+  overlay.className = "pointer-events-none absolute inset-0";
+  caption.classList.remove("bg-black/35", "bg-abyss/70", "border-sand/60");
+  caption.classList.add("bg-black/35");
+
+  if (state.template === "cinematic") {
+    overlay.classList.add("bg-[radial-gradient(circle_at_center,transparent_42%,rgba(0,0,0,0.58)_100%)]");
+  }
+  if (state.template === "manifesto") {
+    overlay.classList.add("bg-aqua/10");
+    caption.classList.remove("bg-black/35");
+    caption.classList.add("bg-abyss/70", "border-sand/60");
+  }
 }
 
 function setBusy(busy: boolean) {
