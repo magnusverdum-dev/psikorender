@@ -86,6 +86,14 @@ type SourceMediaAsset = {
   kind: "audio" | "background";
 };
 
+type RenderJobSnapshot = {
+  id: string;
+  status: string;
+  progress: number;
+  logs: string[];
+  completedAt?: string;
+};
+
 type ProjectRecord = {
   id: string;
   title: string;
@@ -103,6 +111,7 @@ type ProjectRecord = {
   renderMode?: RenderMode;
   audioAsset?: SourceMediaAsset;
   backgroundAsset?: SourceMediaAsset;
+  renderJob?: RenderJobSnapshot;
   thumbnailUrl?: string;
   url?: string;
 };
@@ -500,6 +509,7 @@ function projectDetailPage(id: string) {
           ${metadataRow("Duracao", formatDuration(project.duration))}
         </div>
         ${sourceMediaPanel(project)}
+        ${renderJobPanel(project)}
         <div class="mt-5 grid gap-3">
           <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
           <button class="secondary-button justify-center" data-edit-project="${escapeAttr(project.id)}">${isEditing ? "Fechar edicao" : "Editar metadados"}</button>
@@ -578,6 +588,29 @@ function sourceMediaRow(asset: SourceMediaAsset) {
       <span class="block text-xs uppercase tracking-[0.16em] text-aqua">${asset.kind === "audio" ? "Audio" : "Background"}</span>
       <span class="mt-1 block break-words text-white">${escapeHtml(asset.name)}</span>
       <span class="mt-1 block text-white/65">${escapeHtml(displayMimeType(asset.mimeType))} | ${formatBytes(asset.size)}</span>
+    </div>
+  `;
+}
+
+function renderJobPanel(project: ProjectRecord) {
+  if (!project.renderJob) return "";
+  const job = project.renderJob;
+  const logs = job.logs.length
+    ? job.logs.map((line) => `<li class="break-words">${escapeHtml(line)}</li>`).join("")
+    : `<li class="text-white/55">Sem logs persistidos.</li>`;
+
+  return `
+    <div class="mt-5 rounded-md border border-white/10 bg-white/10 p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold text-white">Job de render</h2>
+        <span class="rounded-md border border-white/10 bg-abyss/55 px-2 py-1 text-xs uppercase tracking-[0.16em] text-aqua">${escapeHtml(job.status)}</span>
+      </div>
+      <div class="mt-3 grid gap-3 text-sm text-white/75">
+        ${metadataRow("Job ID", job.id)}
+        ${metadataRow("Progresso", `${Math.round(job.progress)}%`)}
+        ${job.completedAt ? metadataRow("Concluido", formatDate(job.completedAt)) : ""}
+      </div>
+      <ol class="mt-3 grid gap-1 text-xs leading-5 text-white/70">${logs}</ol>
     </div>
   `;
 }
@@ -1128,6 +1161,7 @@ async function generateVideo() {
       renderMode: state.settings.renderMode,
       audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
       backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
+      renderJob: currentRenderJobSnapshot("rendering", state.progress),
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
@@ -1135,6 +1169,9 @@ async function generateVideo() {
     await saveRenderedProject(result.blob, savedProject);
     state.lastRenderedProjectId = savedProject.id;
     logRenderStep("completed", "Video gerado com sucesso e pronto para download.", 100);
+    savedProject.renderJob = currentRenderJobSnapshot("completed", 100);
+    await updateStoredProjectMetadata(savedProject);
+    state.projects = state.projects.map((item) => (item.id === savedProject.id ? savedProject : item));
     refreshCreateUi();
   } catch (error) {
     logRenderStep("failed", error instanceof Error ? error.message : "Falha ao gerar video.", 0);
@@ -1511,6 +1548,7 @@ function projectToMetadata(project: ProjectRecord) {
     renderMode: project.renderMode || defaultSettings.renderMode,
     audioAsset: project.audioAsset,
     backgroundAsset: project.backgroundAsset,
+    renderJob: project.renderJob,
     createdAt: project.createdAt,
   };
 }
@@ -1552,6 +1590,7 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
   const renderMode = isRenderMode(item.renderMode) ? item.renderMode : defaultSettings.renderMode;
   const audioAsset = normalizeSourceAsset(item.audioAsset, "audio");
   const backgroundAsset = normalizeSourceAsset(item.backgroundAsset, "background");
+  const renderJob = normalizeRenderJob(item.renderJob);
 
   return {
     id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
@@ -1569,6 +1608,7 @@ function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
     renderMode,
     audioAsset,
     backgroundAsset,
+    renderJob,
     createdAt,
   };
 }
@@ -1586,6 +1626,20 @@ function normalizeSourceAsset(value: unknown, kind: SourceMediaAsset["kind"]): S
     size,
     kind,
   };
+}
+
+function normalizeRenderJob(value: unknown): RenderJobSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Record<string, unknown>;
+  const id = typeof item.id === "string" && item.id.trim() ? item.id : "";
+  if (!id) return undefined;
+  const status = typeof item.status === "string" && item.status.trim() ? item.status : "completed";
+  const progress = typeof item.progress === "number" && Number.isFinite(item.progress) ? Math.max(0, Math.min(100, item.progress)) : 100;
+  const logs = Array.isArray(item.logs)
+    ? item.logs.filter((line): line is string => typeof line === "string" && line.trim().length > 0).slice(0, 8)
+    : [];
+  const completedAt = typeof item.completedAt === "string" ? item.completedAt : undefined;
+  return { id, status, progress, logs, completedAt };
 }
 
 function reuseProject(id: string) {
@@ -2210,6 +2264,16 @@ function logRenderStep(phase: string, message: string, progress: number) {
 function refreshRenderLog() {
   const renderLog = document.querySelector<HTMLDivElement>("#renderLog");
   if (renderLog) renderLog.innerHTML = renderLogHtml();
+}
+
+function currentRenderJobSnapshot(status = state.renderPhase, progress = state.progress): RenderJobSnapshot {
+  return {
+    id: state.renderJobId || `local-${Date.now().toString(36)}`,
+    status,
+    progress: Math.max(0, Math.min(100, progress)),
+    logs: [...state.renderLogs],
+    completedAt: status === "completed" ? new Date().toISOString() : undefined,
+  };
 }
 
 function renderLogHtml() {
