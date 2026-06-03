@@ -266,6 +266,10 @@ function createPage() {
             <button id="demoMedia" class="secondary-button w-full justify-center" type="button">Usar media demo</button>
             <button id="clearDraft" class="secondary-button w-full justify-center" type="button">Limpar rascunho</button>
           </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <button id="exportDraftSrt" class="secondary-button w-full justify-center" type="button">Exportar SRT</button>
+            <button id="exportDraftAss" class="secondary-button w-full justify-center" type="button">Exportar ASS</button>
+          </div>
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
@@ -426,6 +430,8 @@ function projectDetailPage(id: string) {
           <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
           <button class="secondary-button justify-center" data-reuse-project="${escapeAttr(project.id)}">Reutilizar no create</button>
           <button class="secondary-button justify-center" data-export-project="${escapeAttr(project.id)}">Exportar JSON</button>
+          <button class="secondary-button justify-center" data-export-captions="${escapeAttr(project.id)}" data-caption-format="srt">Exportar SRT</button>
+          <button class="secondary-button justify-center" data-export-captions="${escapeAttr(project.id)}" data-caption-format="ass">Exportar ASS</button>
           <button class="secondary-button justify-center ${isPendingDelete ? "border-sand/70 text-sand" : ""}" data-delete-project="${escapeAttr(project.id)}">${isPendingDelete ? "Confirmar apagar" : "Apagar projeto"}</button>
         </div>
       </aside>
@@ -520,6 +526,13 @@ function bindSharedEvents() {
       if (id) exportProjectJson(id);
     });
   });
+  document.querySelectorAll<HTMLButtonElement>("[data-export-captions]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.exportCaptions;
+      const format = button.dataset.captionFormat;
+      if (id && isCaptionExportFormat(format)) exportProjectCaptions(id, format);
+    });
+  });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
   });
@@ -569,6 +582,8 @@ function bindCreateEvents() {
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
   const clearDraft = document.querySelector<HTMLButtonElement>("#clearDraft");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
+  const exportDraftSrt = document.querySelector<HTMLButtonElement>("#exportDraftSrt");
+  const exportDraftAss = document.querySelector<HTMLButtonElement>("#exportDraftAss");
   const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-script-preset]");
 
   title?.addEventListener("input", () => {
@@ -635,6 +650,12 @@ function bindCreateEvents() {
   });
   generate?.addEventListener("click", () => {
     void generateVideo();
+  });
+  exportDraftSrt?.addEventListener("click", () => {
+    exportDraftCaptions("srt");
+  });
+  exportDraftAss?.addEventListener("click", () => {
+    exportDraftCaptions("ass");
   });
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1021,6 +1042,30 @@ function exportProjectJson(id: string) {
   downloadProjectsJson([project], `${safeFilename(project.title, "json")}`);
 }
 
+function exportDraftCaptions(format: CaptionExportFormat) {
+  const duration = state.renderedDuration || estimateDraftCaptionDuration(state.text);
+  downloadCaptions({
+    title: state.title.trim() || "psikorender",
+    text: state.text,
+    duration,
+    style: state.captionStyle,
+    format,
+  });
+  setStatus(`Legendas ${format.toUpperCase()} exportadas.`, state.progress);
+}
+
+function exportProjectCaptions(id: string, format: CaptionExportFormat) {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) return;
+  downloadCaptions({
+    title: project.title,
+    text: project.text,
+    duration: project.duration,
+    style: project.captionStyle,
+    format,
+  });
+}
+
 function downloadProjectsJson(projects: ProjectRecord[], filename: string) {
   const payload = {
     app: "PsikoRender",
@@ -1038,6 +1083,106 @@ function downloadProjectsJson(projects: ProjectRecord[], filename: string) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+type CaptionExportFormat = "srt" | "ass";
+
+function isCaptionExportFormat(value: unknown): value is CaptionExportFormat {
+  return value === "srt" || value === "ass";
+}
+
+function downloadCaptions(options: {
+  title: string;
+  text: string;
+  duration: number;
+  style: CaptionStyle;
+  format: CaptionExportFormat;
+}) {
+  const segments = buildSegments(options.text, Math.max(1, options.duration));
+  const content =
+    options.format === "srt"
+      ? buildSrt(segments)
+      : buildAss(segments, options.style);
+  const mimeType = options.format === "srt" ? "application/x-subrip;charset=utf-8" : "text/x-ssa;charset=utf-8";
+  downloadTextFile(content, `${safeFilename(options.title, options.format)}`, mimeType);
+}
+
+function downloadTextFile(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildSrt(segments: Segment[]) {
+  return `${segments
+    .map((segment, index) => [
+      String(index + 1),
+      `${formatSrtTime(segment.start)} --> ${formatSrtTime(segment.end)}`,
+      segment.text,
+    ].join("\n"))
+    .join("\n\n")}\n`;
+}
+
+function buildAss(segments: Segment[], style: CaptionStyle) {
+  const fontSize = style === "minimal" ? 64 : 78;
+  const primaryColor = style === "karaoke_basic" ? "&H00A7D9F0" : "&H00FFFFFF";
+  const lines = segments
+    .map((segment) => `Dialogue: 0,${formatAssTime(segment.start)},${formatAssTime(segment.end)},Default,,0,0,0,,${escapeAssText(style === "manifesto" ? segment.text.toUpperCase() : segment.text)}`)
+    .join("\n");
+
+  return `[Script Info]
+Title: PsikoRender captions
+ScriptType: v4.00+
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,${fontSize},${primaryColor},&H00FFFFFF,&H00102032,&H99000000,1,0,0,0,100,100,0,0,1,5,2,2,80,80,180,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${lines}
+`;
+}
+
+function formatSrtTime(seconds: number) {
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const hours = Math.floor(totalMs / 3_600_000);
+  const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
+  const secs = Math.floor((totalMs % 60_000) / 1000);
+  const millis = totalMs % 1000;
+  return `${padTime(hours)}:${padTime(minutes)}:${padTime(secs)},${String(millis).padStart(3, "0")}`;
+}
+
+function formatAssTime(seconds: number) {
+  const totalCs = Math.max(0, Math.round(seconds * 100));
+  const hours = Math.floor(totalCs / 360_000);
+  const minutes = Math.floor((totalCs % 360_000) / 6_000);
+  const secs = Math.floor((totalCs % 6_000) / 100);
+  const centis = totalCs % 100;
+  return `${hours}:${padTime(minutes)}:${padTime(secs)}.${padTime(centis)}`;
+}
+
+function padTime(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function escapeAssText(value: string) {
+  return value.replace(/[{}]/g, "").replace(/\r?\n/g, "\\N");
+}
+
+function estimateDraftCaptionDuration(text: string) {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(3, words * 0.42);
 }
 
 function projectToMetadata(project: ProjectRecord) {
