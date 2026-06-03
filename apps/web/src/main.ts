@@ -124,6 +124,8 @@ type DraftState = {
   format: VideoFormat;
   template: RenderTemplate;
   captionStyle: CaptionStyle;
+  captionSegments?: Segment[];
+  captionSourceName?: string;
 };
 
 type LocalSettings = {
@@ -141,6 +143,8 @@ type State = {
   format: VideoFormat;
   template: RenderTemplate;
   captionStyle: CaptionStyle;
+  captionSegments?: Segment[];
+  captionSourceName?: string;
   audioFile?: File;
   backgroundFile?: File;
   audioUrl?: string;
@@ -185,6 +189,8 @@ const state: State = {
   format: savedDraft.format,
   template: savedDraft.template,
   captionStyle: savedDraft.captionStyle,
+  captionSegments: savedDraft.captionSegments,
+  captionSourceName: savedDraft.captionSourceName,
   projects: [],
   projectFilter: savedProjectView.projectFilter,
   projectStatusFilter: savedProjectView.projectStatusFilter,
@@ -321,12 +327,14 @@ function createPage() {
           <div class="rounded-md border border-white/10 bg-white/10 p-3">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <span class="text-sm font-semibold text-white">Segmentos estimados</span>
+              ${state.captionSourceName ? `<span class="text-xs uppercase tracking-[0.16em] text-sand">${escapeHtml(state.captionSourceName)}</span>` : ""}
               <button id="toggleDraftSegments" class="secondary-button px-3 py-2 text-sm" type="button">${state.showDraftSegments ? "Esconder segmentos" : "Ver segmentos"}</button>
             </div>
             <div id="draftSegmentsPanel" class="${state.showDraftSegments ? "mt-3" : "hidden"}">
-              ${state.showDraftSegments ? captionSegmentsHtml(state.text, draftCaptionDuration()) : ""}
+              ${state.showDraftSegments ? captionSegmentsHtml(state.text, draftCaptionDuration(), state.captionSegments) : ""}
             </div>
           </div>
+          <label class="upload-box"><span>Legendas SRT</span><input id="captionsFile" type="file" accept=".srt,application/x-subrip,text/plain" /><small id="captionsLabel">${state.captionSourceName ? `SRT: ${escapeHtml(state.captionSourceName)}` : "Opcional: importa um .srt ou gera SRT a partir do texto"}</small></label>
           <div class="grid gap-4 md:grid-cols-2">
             <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
             <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">${BACKGROUND_UPLOAD.label}</small></label>
@@ -349,6 +357,7 @@ function createPage() {
           <div id="exportReadiness" class="rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80">
             ${exportReadinessHtml()}
           </div>
+          <video id="resultPreview" class="hidden aspect-video w-full rounded-md bg-abyss object-contain" controls playsinline></video>
           <a id="download" class="secondary-button hidden justify-center" download>Download do video</a>
           <div id="resultSummary" class="hidden rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80"></div>
         </div>
@@ -472,7 +481,7 @@ function projectDetailPage(id: string) {
     ? `<video class="aspect-video w-full rounded-md bg-abyss object-contain" src="${escapeAttr(project.url)}" controls playsinline ${project.thumbnailUrl ? `poster="${escapeAttr(project.thumbnailUrl)}"` : ""}></video>`
     : project.thumbnailUrl
       ? `<img class="aspect-video w-full rounded-md object-cover" src="${escapeAttr(project.thumbnailUrl)}" alt="Preview de ${escapeAttr(project.title)}" />`
-      : `<div class="flex aspect-video items-center justify-center rounded-md border border-white/10 bg-white/10 text-center text-sm text-white/65">Projeto importado apenas com metadados</div>`;
+      : `<div class="flex aspect-video items-center justify-center rounded-md border border-white/10 bg-white/10 px-5 text-center text-sm text-white/65">Sem ficheiro de video neste browser. Projetos importados por JSON trazem metadados e legendas, mas nao o blob do video.</div>`;
 
   return `
     <section class="mx-auto grid w-full max-w-6xl gap-6 px-5 pb-16 pt-6 lg:grid-cols-[1fr_360px]">
@@ -867,6 +876,7 @@ function bindCreateEvents() {
   const format = document.querySelector<HTMLSelectElement>("#format");
   const template = document.querySelector<HTMLSelectElement>("#template");
   const captionStyle = document.querySelector<HTMLSelectElement>("#captionStyle");
+  const captionsFile = document.querySelector<HTMLInputElement>("#captionsFile");
   const audio = document.querySelector<HTMLInputElement>("#audio");
   const background = document.querySelector<HTMLInputElement>("#background");
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
@@ -885,6 +895,8 @@ function bindCreateEvents() {
   });
   text?.addEventListener("input", () => {
     state.text = text.value;
+    state.captionSegments = undefined;
+    state.captionSourceName = undefined;
     saveDraft();
     clearRenderedResult();
     const preview = document.querySelector<HTMLDivElement>("#captionPreview");
@@ -910,6 +922,11 @@ function bindCreateEvents() {
     state.captionStyle = captionStyle.value as CaptionStyle;
     saveDraft();
     clearRenderedResult();
+  });
+  captionsFile?.addEventListener("change", () => {
+    const file = captionsFile.files?.[0];
+    if (file) void importSrtFile(file);
+    captionsFile.value = "";
   });
   audio?.addEventListener("change", () => {
     const file = audio.files?.[0];
@@ -975,6 +992,8 @@ function applyScriptPreset(id: string | undefined) {
   state.text = preset.text;
   state.template = preset.template;
   state.captionStyle = preset.captionStyle;
+  state.captionSegments = undefined;
+  state.captionSourceName = undefined;
   saveDraft();
   render();
   setStatus(`Preset aplicado: ${preset.label}.`, state.progress);
@@ -1019,6 +1038,24 @@ async function useDemoMedia() {
   }
 }
 
+async function importSrtFile(file: File) {
+  try {
+    if (!file.name.toLowerCase().endsWith(".srt")) throw new Error("Carrega um ficheiro .srt valido.");
+    if (file.size > 2 * 1024 * 1024) throw new Error("O ficheiro SRT deve ter ate 2 MB.");
+    const segments = parseSrt(await file.text());
+    if (!segments.length) throw new Error("Nao foram encontrados segmentos no SRT.");
+    clearRenderedResult();
+    state.captionSegments = segments;
+    state.captionSourceName = file.name;
+    state.text = segments.map((segment) => segment.text).join("\n");
+    saveDraft();
+    render();
+    setStatus(`SRT importado com ${segments.length} segmentos.`, state.progress);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Falha ao importar SRT.", 0);
+  }
+}
+
 function clearAudioFile() {
   clearRenderedResult();
   clearAudioUrl();
@@ -1052,6 +1089,8 @@ function resetCreateDraft() {
   state.format = defaultDraft.format;
   state.template = defaultDraft.template;
   state.captionStyle = defaultDraft.captionStyle;
+  state.captionSegments = undefined;
+  state.captionSourceName = undefined;
   state.audioFile = undefined;
   state.backgroundFile = undefined;
   state.audioUrl = undefined;
@@ -1079,8 +1118,10 @@ function clearRenderedResult() {
 function refreshCreateUi() {
   const audioLabel = document.querySelector("#audioLabel");
   const backgroundLabel = document.querySelector("#backgroundLabel");
+  const captionsLabel = document.querySelector("#captionsLabel");
   const audioPreview = document.querySelector<HTMLAudioElement>("#audioPreview");
   const backgroundPreview = document.querySelector<HTMLVideoElement>("#backgroundPreview");
+  const resultPreview = document.querySelector<HTMLVideoElement>("#resultPreview");
   const download = document.querySelector<HTMLAnchorElement>("#download");
   const resultSummary = document.querySelector<HTMLDivElement>("#resultSummary");
   const renderLog = document.querySelector<HTMLDivElement>("#renderLog");
@@ -1091,6 +1132,7 @@ function refreshCreateUi() {
       ? `${state.backgroundFile.name} (${formatBytes(state.backgroundFile.size)})`
       : BACKGROUND_UPLOAD.label;
   }
+  if (captionsLabel) captionsLabel.textContent = state.captionSourceName ? `SRT: ${state.captionSourceName}` : "Opcional: importa um .srt ou gera SRT a partir do texto";
   if (audioPreview) audioPreview.src = state.audioUrl || "";
   if (backgroundPreview && state.backgroundUrl) {
     backgroundPreview.src = state.backgroundUrl;
@@ -1107,6 +1149,14 @@ function refreshCreateUi() {
   } else if (download) {
     download.removeAttribute("href");
     download.classList.add("hidden");
+  }
+  if (resultPreview && state.renderedUrl) {
+    resultPreview.src = state.renderedUrl;
+    resultPreview.classList.remove("hidden");
+  } else if (resultPreview) {
+    resultPreview.removeAttribute("src");
+    resultPreview.classList.add("hidden");
+    resultPreview.load();
   }
   if (resultSummary && state.renderedName && state.renderedSize && state.renderedDuration) {
     resultSummary.classList.remove("hidden");
@@ -1155,6 +1205,7 @@ async function generateVideo() {
       format: state.format,
       template: state.template,
       style: state.captionStyle,
+      segments: state.captionSegments,
       onPhase: (phase, message, progress) => logRenderStep(phase, message, progress),
       onProgress: (progress) => setStatus(`A renderizar... ${Math.round(progress)}%`, progress),
     });
@@ -1183,7 +1234,7 @@ async function generateVideo() {
       audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
       backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
       renderJob: currentRenderJobSnapshot("rendering", state.progress),
-      captionSegments: buildSegments(state.text.trim() || "PsikoRender", result.duration),
+      captionSegments: state.captionSegments?.length ? state.captionSegments : buildSegments(state.text.trim() || "PsikoRender", result.duration),
       thumbnailUrl: result.thumbnailUrl,
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
@@ -1226,7 +1277,7 @@ async function saveDraftProject() {
     renderMode: state.settings.renderMode,
     audioAsset: state.audioFile ? fileToSourceAsset(state.audioFile, "audio") : undefined,
     backgroundAsset: state.backgroundFile ? fileToSourceAsset(state.backgroundFile, "background") : undefined,
-    captionSegments: buildSegments(state.text.trim() || "PsikoRender", draftCaptionDuration()),
+    captionSegments: state.captionSegments?.length ? state.captionSegments : buildSegments(state.text.trim() || "PsikoRender", draftCaptionDuration()),
     createdAt: new Date().toISOString(),
   };
   project.size = new Blob([JSON.stringify(projectToMetadata(project), null, 2)], { type: "application/json" }).size;
@@ -1258,6 +1309,7 @@ async function renderClientVideo(options: {
   format: VideoFormat;
   template: RenderTemplate;
   style: CaptionStyle;
+  segments?: Segment[];
   onPhase: (phase: string, message: string, progress: number) => void;
   onProgress: (progress: number) => void;
 }) {
@@ -1282,7 +1334,7 @@ async function renderClientVideo(options: {
   video.muted = true;
 
   const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 10;
-  const segments = buildSegments(options.text, duration);
+  const segments = options.segments?.length ? options.segments : buildSegments(options.text, duration);
   options.onPhase("captions", `${segments.length} blocos de legenda estimados para ${formatDuration(duration)}.`, 18);
   const canvasStream = canvas.captureStream(30);
   const audioStream = captureElementStream(audio);
@@ -2118,6 +2170,31 @@ function buildSegments(text: string, duration: number): Segment[] {
   });
 }
 
+function parseSrt(content: string): Segment[] {
+  return content
+    .replace(/\r/g, "")
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+      const timeIndex = lines.findIndex((line) => line.includes("-->"));
+      if (timeIndex < 0) return undefined;
+      const [startRaw, endRaw] = lines[timeIndex].split("-->").map((part) => part.trim());
+      const start = parseSrtTime(startRaw);
+      const end = parseSrtTime(endRaw);
+      const text = lines.slice(timeIndex + 1).join(" ").trim();
+      if (start === undefined || end === undefined || end <= start || !text) return undefined;
+      return { text, start, end };
+    })
+    .filter(Boolean) as Segment[];
+}
+
+function parseSrtTime(value: string) {
+  const match = value.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{1,3})/);
+  if (!match) return undefined;
+  const [, hours, minutes, seconds, millis] = match;
+  return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds) + Number(millis.padEnd(3, "0")) / 1000;
+}
+
 function splitSentences(text: string) {
   const matches = text.match(/[^.!?\n]+[.!?\n]*/g)?.map((part) => part.trim()).filter(Boolean);
   return matches?.length ? matches : ["PsikoRender"];
@@ -2437,6 +2514,8 @@ function loadDraft(): DraftState {
       format: isVideoFormat(parsed.format) ? parsed.format : defaultDraft.format,
       template: isRenderTemplate(parsed.template) ? parsed.template : defaultDraft.template,
       captionStyle: isCaptionStyle(parsed.captionStyle) ? parsed.captionStyle : defaultDraft.captionStyle,
+      captionSegments: normalizeCaptionSegments(parsed.captionSegments),
+      captionSourceName: typeof parsed.captionSourceName === "string" && parsed.captionSourceName.trim() ? parsed.captionSourceName : undefined,
     };
   } catch {
     return defaultDraft;
@@ -2452,6 +2531,8 @@ function saveDraft() {
       format: state.format,
       template: state.template,
       captionStyle: state.captionStyle,
+      captionSegments: state.captionSegments,
+      captionSourceName: state.captionSourceName,
     } satisfies DraftState),
   );
 }
