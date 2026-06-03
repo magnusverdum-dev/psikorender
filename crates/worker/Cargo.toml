@@ -1,0 +1,22 @@
+[package]
+name = "worker"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+captions = { path = "../captions" }
+chrono.workspace = true
+dotenvy.workspace = true
+media_core = { path = "../media_core" }
+redis.workspace = true
+renderer = { path = "../renderer" }
+serde_json.workspace = true
+shared = { path = "../shared" }
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

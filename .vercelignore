@@ -1,0 +1,10 @@
+target/
+storage/uploads/
+storage/generated_audio/
+storage/generated_video/
+storage/thumbnails/
+storage/captions/
+apps/web/node_modules/
+apps/web/dist/
+*.log
+.env
