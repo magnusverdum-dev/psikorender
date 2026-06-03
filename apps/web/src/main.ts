@@ -83,6 +83,9 @@ type State = {
   storageReady: boolean;
   status: string;
   progress: number;
+  renderJobId?: string;
+  renderPhase: string;
+  renderLogs: string[];
   busy: boolean;
 };
 
@@ -104,6 +107,8 @@ const state: State = {
   storageReady: false,
   status: "",
   progress: 0,
+  renderPhase: "idle",
+  renderLogs: [],
   busy: false,
 };
 
@@ -220,6 +225,9 @@ function createPage() {
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
+          <div id="renderLog" class="rounded-md border border-white/10 bg-abyss/55 p-3 text-sm text-white/75">
+            ${renderLogHtml()}
+          </div>
           <a id="download" class="secondary-button hidden justify-center" download>Download do video</a>
           <div id="resultSummary" class="hidden rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80"></div>
         </div>
@@ -663,6 +671,9 @@ function resetCreateDraft() {
   localStorage.removeItem("psikorender-create-draft");
   state.status = "Rascunho limpo.";
   state.progress = 0;
+  state.renderJobId = undefined;
+  state.renderPhase = "idle";
+  state.renderLogs = [];
   render();
 }
 
@@ -683,6 +694,7 @@ function refreshCreateUi() {
   const backgroundPreview = document.querySelector<HTMLVideoElement>("#backgroundPreview");
   const download = document.querySelector<HTMLAnchorElement>("#download");
   const resultSummary = document.querySelector<HTMLDivElement>("#resultSummary");
+  const renderLog = document.querySelector<HTMLDivElement>("#renderLog");
 
   if (audioLabel) audioLabel.textContent = state.audioFile ? `${state.audioFile.name} (${formatBytes(state.audioFile.size)})` : AUDIO_UPLOAD.label;
   if (backgroundLabel) {
@@ -717,6 +729,7 @@ function refreshCreateUi() {
     resultSummary.classList.add("hidden");
     resultSummary.textContent = "";
   }
+  if (renderLog) renderLog.innerHTML = renderLogHtml();
   updatePreviewAspect();
   updateTemplatePreview();
   setStatus(state.status || "Pronto para criar.", state.progress);
@@ -735,7 +748,9 @@ async function generateVideo() {
 
   state.busy = true;
   setBusy(true);
-  setStatus("A preparar media...", 5);
+  startRenderLog();
+  logRenderStep("queued", "Job local criado e colocado em execucao.", 3);
+  logRenderStep("preparing", "A validar audio, background e parametros do video.", 8);
 
   try {
     const result = await renderClientVideo({
@@ -745,9 +760,11 @@ async function generateVideo() {
       format: state.format,
       template: state.template,
       style: state.captionStyle,
+      onPhase: (phase, message, progress) => logRenderStep(phase, message, progress),
       onProgress: (progress) => setStatus(`A renderizar... ${Math.round(progress)}%`, progress),
     });
 
+    logRenderStep("saving", "A guardar video e metadados no historico local.", 96);
     if (state.renderedUrl) URL.revokeObjectURL(state.renderedUrl);
     state.renderedUrl = URL.createObjectURL(result.blob);
     state.renderedName = safeFilename(state.title, result.extension);
@@ -769,10 +786,10 @@ async function generateVideo() {
       createdAt: new Date().toISOString(),
       url: state.renderedUrl,
     });
-    setStatus("Video gerado com sucesso.", 100);
+    logRenderStep("completed", "Video gerado com sucesso e pronto para download.", 100);
     refreshCreateUi();
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Falha ao gerar video.", 0);
+    logRenderStep("failed", error instanceof Error ? error.message : "Falha ao gerar video.", 0);
   } finally {
     state.busy = false;
     setBusy(false);
@@ -786,6 +803,7 @@ async function renderClientVideo(options: {
   format: VideoFormat;
   template: RenderTemplate;
   style: CaptionStyle;
+  onPhase: (phase: string, message: string, progress: number) => void;
   onProgress: (progress: number) => void;
 }) {
   if (!("MediaRecorder" in window)) {
@@ -810,6 +828,7 @@ async function renderClientVideo(options: {
 
   const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 10;
   const segments = buildSegments(options.text, duration);
+  options.onPhase("captions", `${segments.length} blocos de legenda estimados para ${formatDuration(duration)}.`, 18);
   const canvasStream = canvas.captureStream(30);
   const audioStream = captureElementStream(audio);
 
@@ -820,6 +839,7 @@ async function renderClientVideo(options: {
   const mimeType = pickMimeType();
   const chunks: BlobPart[] = [];
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  options.onPhase("rendering", `A capturar canvas e audio em ${displayMimeType(mimeType || "video/webm")}.`, 24);
   recorder.addEventListener("dataavailable", (event) => {
     if (event.data.size > 0) chunks.push(event.data);
   });
@@ -1487,6 +1507,41 @@ function setStatus(message: string, progress: number) {
   const bar = document.querySelector<HTMLDivElement>("#progressBar");
   if (status) status.textContent = message;
   if (bar) bar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+}
+
+function startRenderLog() {
+  state.renderJobId = `local-${Date.now().toString(36)}`;
+  state.renderPhase = "queued";
+  state.renderLogs = [];
+  refreshRenderLog();
+}
+
+function logRenderStep(phase: string, message: string, progress: number) {
+  state.renderPhase = phase;
+  const time = new Intl.DateTimeFormat("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
+  state.renderLogs = [`${time} | ${phase} | ${message}`, ...state.renderLogs].slice(0, 8);
+  setStatus(message, progress);
+  refreshRenderLog();
+}
+
+function refreshRenderLog() {
+  const renderLog = document.querySelector<HTMLDivElement>("#renderLog");
+  if (renderLog) renderLog.innerHTML = renderLogHtml();
+}
+
+function renderLogHtml() {
+  const phase = state.renderPhase === "idle" ? "sem job ativo" : state.renderPhase;
+  const logs = state.renderLogs.length
+    ? state.renderLogs.map((line) => `<li class="break-words">${escapeHtml(line)}</li>`).join("")
+    : `<li class="text-white/55">Os logs do proximo render aparecem aqui.</li>`;
+
+  return `
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <span class="font-semibold text-white">Job ${escapeHtml(state.renderJobId || "local")}</span>
+      <span class="rounded-md border border-white/10 bg-white/10 px-2 py-1 text-xs uppercase tracking-[0.16em] text-aqua">${escapeHtml(phase)}</span>
+    </div>
+    <ol class="mt-3 grid gap-1 text-xs leading-5">${logs}</ol>
+  `;
 }
 
 function firstSentence(text: string) {
