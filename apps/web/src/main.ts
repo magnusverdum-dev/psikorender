@@ -10,6 +10,13 @@ type ScriptPresetId = "story" | "manifesto" | "calm";
 type VoiceProvider = "stub" | "fish_speech" | "f5" | "piper" | "openvoice";
 type RenderMode = "browser" | "backend";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+const APP_VERSION = "1.1.0";
+
 const AUDIO_UPLOAD = {
   label: "WAV, MP3, M4A ou AAC ate 50 MB",
   extensions: ["wav", "mp3", "m4a", "aac"],
@@ -195,6 +202,7 @@ const savedDraft = loadDraft();
 const savedProjectView = loadProjectView();
 const savedSettings = loadSettings();
 const savedVoiceProfiles = loadVoiceProfiles();
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 
 const state: State = {
   path: window.location.pathname,
@@ -227,6 +235,23 @@ const state: State = {
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event as BeforeInstallPromptEvent;
+  render();
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  render();
+});
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
 
 window.addEventListener("popstate", () => {
   state.path = window.location.pathname;
@@ -281,27 +306,33 @@ function render() {
 }
 
 function shell(content: string) {
+  const entryGate = shouldShowEntryGate() ? entryGateHtml() : "";
   return `
     <main class="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(103,232,249,0.18),transparent_34%),linear-gradient(135deg,#082032,#0f3f50_46%,#f0d9a7)] text-white">
-      <nav class="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5">
-        <button class="text-lg font-semibold tracking-wide" data-nav="/">PsikoRender</button>
-        <div class="flex items-center gap-2 text-sm text-white/75">
+      <nav class="mx-auto flex w-full max-w-6xl flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-3">
+          <button class="text-lg font-semibold tracking-wide whitespace-nowrap" data-nav="/">PsikoRender</button>
+          <span class="rounded-md border border-white/10 bg-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.2em] text-aqua">v${APP_VERSION}</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-sm text-white/75 sm:justify-end">
           <button class="nav-link" data-nav="/create">Criar</button>
           <button class="nav-link" data-nav="/projects">Projetos</button>
           <button class="nav-link" data-nav="/settings">Settings</button>
+          ${deferredInstallPrompt ? `<button class="secondary-button px-3 py-2 text-sm" data-install-app="1" type="button">Instalar app</button>` : ""}
         </div>
       </nav>
       ${content}
     </main>
+    ${entryGate}
   `;
 }
 
 function homePage() {
   return `
-    <section class="mx-auto grid min-h-[calc(100vh-88px)] w-full max-w-6xl items-center gap-10 px-5 pb-16 pt-6 lg:grid-cols-[1fr_380px]">
-      <div class="max-w-3xl">
+    <section class="mx-auto grid min-h-[calc(100vh-88px)] w-full max-w-6xl items-center gap-10 overflow-hidden px-5 pb-16 pt-6 lg:grid-cols-[1fr_380px]">
+      <div class="max-w-3xl min-w-0">
         <p class="mb-4 text-sm uppercase tracking-[0.32em] text-aqua">Local-first video render</p>
-        <h1 class="text-5xl font-bold leading-tight sm:text-7xl">Texto em video com voz, legendas e fundos cinematograficos.</h1>
+        <h1 class="max-w-[12ch] text-4xl font-bold leading-tight sm:max-w-none sm:text-7xl">Texto em video com voz, legendas e fundos cinematograficos.</h1>
         <p class="mt-6 max-w-2xl text-lg leading-8 text-white/80">Um pipeline leve para transformar ideias em ficheiros de video usando uploads locais, canvas, audio e legendas geradas por frase.</p>
         <div class="mt-8 flex flex-wrap gap-3">
           <button class="primary-button" data-nav="/create">Criar video</button>
@@ -320,7 +351,7 @@ function homePage() {
 function createPage() {
   return `
     <section class="mx-auto grid w-full max-w-6xl gap-6 px-5 pb-16 pt-6 lg:grid-cols-[1fr_380px]">
-      <div class="glass-panel p-5">
+      <div class="glass-panel min-w-0 p-5">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Criar video</p>
         <h1 class="mt-2 text-3xl font-bold">MVP local no browser</h1>
         <p class="mt-4 rounded-md bg-white/10 p-3 text-sm text-white/80">Seleciona audio e video de fundo. A renderizacao acontece neste browser e gera um ficheiro descarregavel. Nenhum ficheiro e enviado para fora.</p>
@@ -386,7 +417,7 @@ function createPage() {
           <div id="resultSummary" class="hidden rounded-md border border-white/10 bg-white/10 p-3 text-sm text-white/80"></div>
         </div>
       </div>
-      <aside class="glass-panel mx-auto w-full max-w-[360px] p-4">
+      <aside class="glass-panel mx-auto w-full max-w-[360px] min-w-0 p-4">
         <div id="previewFrame" class="relative mx-auto aspect-[9/16] w-full overflow-hidden rounded-md bg-abyss/80" data-template="${state.template}">
           <video id="backgroundPreview" class="h-full w-full object-cover" muted loop playsinline></video>
           <div id="templatePreview" class="pointer-events-none absolute inset-0"></div>
@@ -692,6 +723,60 @@ function voiceProfileSelectOptions() {
     .join("");
 }
 
+function shouldShowEntryGate() {
+  if (window.location.search.includes("skip-intro=1")) return false;
+  return true;
+}
+
+function entryGateHtml() {
+  return `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-4 backdrop-blur-sm">
+      <div class="glass-panel max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto p-5 shadow-glow">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm uppercase tracking-[0.24em] text-aqua">Entrada</p>
+            <h2 class="mt-1 text-2xl font-bold text-white">PsikoRender pronto para mobile</h2>
+          </div>
+          <span class="rounded-md border border-white/10 bg-white/10 px-2 py-1 text-xs uppercase tracking-[0.18em] text-aqua">PWA</span>
+        </div>
+        <p class="mt-4 text-sm leading-6 text-white/75">Podes instalar esta app no telemóvel ou desktop. Se quiseres começar de fresco, limpa os dados locais da app antes de entrar.</p>
+        <div class="mt-5 flex flex-col gap-3">
+          <button class="primary-button w-full justify-center" data-enter-app="1" type="button">Entrar</button>
+          <button class="secondary-button w-full justify-center" data-clear-and-enter="1" type="button">Limpar dados e entrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function clearAppData() {
+  localStorage.clear();
+  await Promise.all([
+    new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase("psikorender-projects");
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    }),
+    caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).then(() => undefined).catch(() => undefined),
+  ]);
+
+  for (const cookie of document.cookie.split(";")) {
+    const name = cookie.split("=")[0]?.trim();
+    if (!name) continue;
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+  }
+}
+
+async function triggerInstallPrompt() {
+  if (!deferredInstallPrompt) return;
+  const prompt = deferredInstallPrompt;
+  deferredInstallPrompt = null;
+  render();
+  await prompt.prompt();
+  await prompt.userChoice.catch(() => undefined);
+}
+
 function filteredProjects() {
   const search = state.projectSearch.trim().toLowerCase();
   const byFormat =
@@ -717,7 +802,7 @@ function settingsPage() {
   const capabilities = browserCapabilities();
   return `
     <section class="mx-auto grid w-full max-w-5xl gap-6 px-5 pb-16 pt-6 lg:grid-cols-[1fr_360px]">
-      <div class="glass-panel p-6">
+      <div class="glass-panel min-w-0 p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Settings</p>
         <h1 class="mt-2 text-3xl font-bold">Voz e modelos locais</h1>
         <form id="settingsForm" class="mt-6 grid gap-4">
@@ -749,7 +834,7 @@ function settingsPage() {
           <div class="mt-4 grid gap-2">${voiceProfilesHtml()}</div>
         </div>
       </div>
-      <aside class="glass-panel p-6">
+      <aside class="glass-panel min-w-0 p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Browser</p>
         <h2 class="mt-2 text-2xl font-bold">Diagnostico local</h2>
         <div class="mt-5 grid gap-3">
@@ -829,6 +914,26 @@ async function refreshStorageEstimate() {
 function bindSharedEvents() {
   document.querySelectorAll<HTMLElement>("[data-nav]").forEach((el) => {
     el.addEventListener("click", () => navigate(el.dataset.nav || "/"));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-install-app]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void triggerInstallPrompt();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-enter-app]").forEach((button) => {
+    button.addEventListener("click", () => {
+      render();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-clear-and-enter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void (async () => {
+        await clearAppData();
+        history.replaceState(null, "", `${window.location.pathname}?skip-intro=1`);
+        state.path = window.location.pathname;
+        render();
+      })();
+    });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-delete-project]").forEach((button) => {
     button.addEventListener("click", () => {
