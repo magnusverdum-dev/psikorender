@@ -148,6 +148,8 @@ type State = {
   renderLogs: string[];
   settings: LocalSettings;
   settingsStatus: string;
+  storageEstimate?: { usage: number; quota: number };
+  storageStatus: string;
   busy: boolean;
 };
 
@@ -175,6 +177,7 @@ const state: State = {
   renderLogs: [],
   settings: savedSettings,
   settingsStatus: "",
+  storageStatus: "",
   busy: false,
 };
 
@@ -226,6 +229,9 @@ function render() {
   if (state.path === "/create") {
     bindCreateEvents();
     refreshCreateUi();
+  }
+  if (state.path === "/settings" && !state.storageEstimate && !state.storageStatus) {
+    void refreshStorageEstimate();
   }
 }
 
@@ -586,6 +592,15 @@ function settingsPage() {
           <span class="block font-semibold text-white">Export preferido</span>
           <span>${escapeHtml(capabilities.preferredMime || "Nao detectado")}</span>
         </div>
+        <div class="mt-5 rounded-md bg-white/10 p-4 text-sm text-white/75">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span class="font-semibold text-white">Storage do browser</span>
+            <button id="refreshStorage" class="secondary-button px-3 py-2 text-sm" type="button">Recalcular</button>
+          </div>
+          <div id="storageEstimate" class="mt-3 grid gap-2">
+            ${storageEstimateHtml()}
+          </div>
+        </div>
       </aside>
     </section>
   `;
@@ -598,6 +613,46 @@ function capabilityRow(label: string, ok: boolean) {
       <span class="${ok ? "text-aqua" : "text-sand"}">${ok ? "OK" : "Falta"}</span>
     </div>
   `;
+}
+
+function storageEstimateHtml() {
+  if (!state.storageEstimate) {
+    return `<span class="text-white/65">${escapeHtml(state.storageStatus || "Ainda nao calculado.")}</span>`;
+  }
+  const { usage, quota } = state.storageEstimate;
+  const percent = quota > 0 ? Math.min(100, (usage / quota) * 100) : 0;
+  return `
+    <div class="flex items-center justify-between gap-3">
+      <span>Uso estimado</span>
+      <span class="font-semibold text-white">${formatBytes(usage)} / ${formatBytes(quota)}</span>
+    </div>
+    <div class="h-2 overflow-hidden rounded-full bg-white/10">
+      <div class="h-full rounded-full bg-gradient-to-r from-aqua to-sand" style="width: ${percent.toFixed(1)}%"></div>
+    </div>
+    <span class="text-xs uppercase tracking-[0.16em] text-aqua">${percent.toFixed(1)}% usado</span>
+  `;
+}
+
+async function refreshStorageEstimate() {
+  const panel = document.querySelector<HTMLDivElement>("#storageEstimate");
+  state.storageStatus = "A calcular storage...";
+  if (panel) panel.innerHTML = storageEstimateHtml();
+
+  try {
+    if (!navigator.storage?.estimate) throw new Error("Storage estimate indisponivel neste browser.");
+    const estimate = await navigator.storage.estimate();
+    state.storageEstimate = {
+      usage: estimate.usage || 0,
+      quota: estimate.quota || 0,
+    };
+    state.storageStatus = "Storage calculado.";
+  } catch (error) {
+    state.storageEstimate = undefined;
+    state.storageStatus = error instanceof Error ? error.message : "Falha ao calcular storage.";
+  }
+
+  const updatedPanel = document.querySelector<HTMLDivElement>("#storageEstimate");
+  if (updatedPanel) updatedPanel.innerHTML = storageEstimateHtml();
 }
 
 function bindSharedEvents() {
@@ -670,6 +725,9 @@ function bindSharedEvents() {
     state.settingsStatus = "Settings repostas.";
     saveSettings();
     render();
+  });
+  document.querySelector<HTMLButtonElement>("#refreshStorage")?.addEventListener("click", () => {
+    void refreshStorageEstimate();
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
