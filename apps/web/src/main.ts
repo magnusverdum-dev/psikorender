@@ -3,6 +3,8 @@ import "./styles.css";
 type VideoFormat = "vertical" | "square" | "landscape";
 type CaptionStyle = "minimal" | "bold" | "karaoke_basic" | "manifesto";
 type RenderTemplate = "minimal" | "cinematic" | "manifesto";
+type ProjectFilter = "all" | VideoFormat;
+type ProjectSort = "newest" | "oldest" | "largest";
 
 const AUDIO_UPLOAD = {
   label: "WAV, MP3, M4A ou AAC ate 50 MB",
@@ -73,6 +75,8 @@ type State = {
   renderedSize?: number;
   renderedDuration?: number;
   projects: ProjectRecord[];
+  projectFilter: ProjectFilter;
+  projectSort: ProjectSort;
   storageReady: boolean;
   status: string;
   progress: number;
@@ -80,6 +84,7 @@ type State = {
 };
 
 const savedDraft = loadDraft();
+const savedProjectView = loadProjectView();
 
 const state: State = {
   path: window.location.pathname,
@@ -89,6 +94,8 @@ const state: State = {
   template: savedDraft.template,
   captionStyle: savedDraft.captionStyle,
   projects: [],
+  projectFilter: savedProjectView.projectFilter,
+  projectSort: savedProjectView.projectSort,
   storageReady: false,
   status: "",
   progress: 0,
@@ -212,6 +219,7 @@ function createPage() {
 function projectsPage() {
   const totalBytes = state.projects.reduce((sum, project) => sum + project.size, 0);
   const totalDuration = state.projects.reduce((sum, project) => sum + project.duration, 0);
+  const visibleProjects = filteredProjects();
   const stats = state.projects.length
     ? `<div class="mb-6 grid gap-3 sm:grid-cols-3">
         <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Projetos</span><span class="text-2xl font-bold text-white">${state.projects.length}</span></div>
@@ -219,8 +227,16 @@ function projectsPage() {
         <div class="rounded-md border border-white/10 bg-white/10 p-4"><span class="block text-sm text-white/65">Duracao total</span><span class="text-2xl font-bold text-white">${formatDuration(totalDuration)}</span></div>
       </div>`
     : "";
+  const controls = state.projects.length
+    ? `<div class="mb-6 grid gap-3 rounded-md border border-white/10 bg-white/10 p-4 sm:grid-cols-2">
+        <label class="field-label">Formato<select id="projectFilter" class="input">${option("all", "Todos", state.projectFilter)}${option("vertical", "9:16", state.projectFilter)}${option("square", "1:1", state.projectFilter)}${option("landscape", "16:9", state.projectFilter)}</select></label>
+        <label class="field-label">Ordenar<select id="projectSort" class="input">${option("newest", "Mais recentes", state.projectSort)}${option("oldest", "Mais antigos", state.projectSort)}${option("largest", "Maior ficheiro", state.projectSort)}</select></label>
+      </div>`
+    : "";
   const content = state.projects.length
-    ? `<div class="grid gap-4 md:grid-cols-2">${state.projects.map(projectCard).join("")}</div>`
+    ? visibleProjects.length
+      ? `<div class="grid gap-4 md:grid-cols-2">${visibleProjects.map(projectCard).join("")}</div>`
+      : `<div class="glass-panel p-5 text-white/80"><h2 class="text-xl font-semibold text-white">Sem resultados</h2><p class="mt-2">Nao ha projetos para este filtro.</p></div>`
     : `<div class="glass-panel p-5 text-white/80">
         <h2 class="text-xl font-semibold text-white">Ainda sem projetos</h2>
         <p class="mt-2">${state.storageReady ? "Cria o primeiro video para aparecer aqui com download persistente." : "A carregar historico local..."}</p>
@@ -234,6 +250,7 @@ function projectsPage() {
         <button class="primary-button" data-nav="/create">Novo</button>
       </div>
       ${stats}
+      ${controls}
       ${content}
     </section>
   `;
@@ -266,6 +283,19 @@ function projectCard(project: ProjectRecord) {
       </div>
     </article>
   `;
+}
+
+function filteredProjects() {
+  const filtered =
+    state.projectFilter === "all"
+      ? [...state.projects]
+      : state.projects.filter((project) => project.format === state.projectFilter);
+
+  return filtered.sort((a, b) => {
+    if (state.projectSort === "oldest") return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    if (state.projectSort === "largest") return b.size - a.size;
+    return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  });
 }
 
 function settingsPage() {
@@ -322,6 +352,18 @@ function bindSharedEvents() {
       const id = button.dataset.reuseProject;
       if (id) reuseProject(id);
     });
+  });
+  const projectFilter = document.querySelector<HTMLSelectElement>("#projectFilter");
+  const projectSort = document.querySelector<HTMLSelectElement>("#projectSort");
+  projectFilter?.addEventListener("change", () => {
+    state.projectFilter = projectFilter.value as ProjectFilter;
+    saveProjectView();
+    render();
+  });
+  projectSort?.addEventListener("change", () => {
+    state.projectSort = projectSort.value as ProjectSort;
+    saveProjectView();
+    render();
   });
 }
 
@@ -1219,6 +1261,35 @@ function isRenderTemplate(value: unknown): value is RenderTemplate {
 
 function isCaptionStyle(value: unknown): value is CaptionStyle {
   return value === "minimal" || value === "bold" || value === "karaoke_basic" || value === "manifesto";
+}
+
+function loadProjectView() {
+  try {
+    const raw = localStorage.getItem("psikorender-project-view");
+    if (!raw) return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort };
+    const parsed = JSON.parse(raw) as { projectFilter?: unknown; projectSort?: unknown };
+    return {
+      projectFilter: isProjectFilter(parsed.projectFilter) ? parsed.projectFilter : "all",
+      projectSort: isProjectSort(parsed.projectSort) ? parsed.projectSort : "newest",
+    };
+  } catch {
+    return { projectFilter: "all" as ProjectFilter, projectSort: "newest" as ProjectSort };
+  }
+}
+
+function saveProjectView() {
+  localStorage.setItem(
+    "psikorender-project-view",
+    JSON.stringify({ projectFilter: state.projectFilter, projectSort: state.projectSort }),
+  );
+}
+
+function isProjectFilter(value: unknown): value is ProjectFilter {
+  return value === "all" || isVideoFormat(value);
+}
+
+function isProjectSort(value: unknown): value is ProjectSort {
+  return value === "newest" || value === "oldest" || value === "largest";
 }
 
 function browserCapabilities() {
