@@ -18,6 +18,14 @@ const BACKGROUND_UPLOAD = {
   maxBytes: 200 * 1024 * 1024,
 };
 
+const defaultDraft: DraftState = {
+  title: "Primeiro video",
+  text: "Escreve aqui o texto do teu video. Divide ideias em frases curtas para legendas mais fortes.",
+  format: "vertical",
+  template: "minimal",
+  captionStyle: "bold",
+};
+
 type Segment = {
   text: string;
   start: number;
@@ -176,7 +184,10 @@ function createPage() {
             <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
             <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">${BACKGROUND_UPLOAD.label}</small></label>
           </div>
-          <button id="demoMedia" class="secondary-button w-full justify-center" type="button">Usar media demo</button>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <button id="demoMedia" class="secondary-button w-full justify-center" type="button">Usar media demo</button>
+            <button id="clearDraft" class="secondary-button w-full justify-center" type="button">Limpar rascunho</button>
+          </div>
           <button id="generate" class="primary-button w-full justify-center disabled:opacity-50">Gerar video</button>
           <div class="h-3 overflow-hidden rounded-full bg-white/10"><div id="progressBar" class="h-full rounded-full bg-gradient-to-r from-aqua to-sand transition-all" style="width: 0%"></div></div>
           <p id="status" class="rounded-md bg-white/10 p-3 text-sm text-white/80">Pronto para criar.</p>
@@ -304,6 +315,7 @@ function bindCreateEvents() {
   const audio = document.querySelector<HTMLInputElement>("#audio");
   const background = document.querySelector<HTMLInputElement>("#background");
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
+  const clearDraft = document.querySelector<HTMLButtonElement>("#clearDraft");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
 
   title?.addEventListener("input", () => {
@@ -363,6 +375,9 @@ function bindCreateEvents() {
   });
   demoMedia?.addEventListener("click", () => {
     void useDemoMedia();
+  });
+  clearDraft?.addEventListener("click", () => {
+    resetCreateDraft();
   });
   generate?.addEventListener("click", () => {
     void generateVideo();
@@ -430,6 +445,25 @@ function clearAudioUrl() {
 
 function clearBackgroundUrl() {
   if (state.backgroundUrl) URL.revokeObjectURL(state.backgroundUrl);
+}
+
+function resetCreateDraft() {
+  clearAudioUrl();
+  clearBackgroundUrl();
+  clearRenderedResult();
+  state.title = defaultDraft.title;
+  state.text = defaultDraft.text;
+  state.format = defaultDraft.format;
+  state.template = defaultDraft.template;
+  state.captionStyle = defaultDraft.captionStyle;
+  state.audioFile = undefined;
+  state.backgroundFile = undefined;
+  state.audioUrl = undefined;
+  state.backgroundUrl = undefined;
+  localStorage.removeItem("psikorender-create-draft");
+  state.status = "Rascunho limpo.";
+  state.progress = 0;
+  render();
 }
 
 function clearRenderedResult() {
@@ -1103,27 +1137,19 @@ function displayMimeType(value: string) {
 }
 
 function loadDraft(): DraftState {
-  const fallback: DraftState = {
-    title: "Primeiro video",
-    text: "Escreve aqui o texto do teu video. Divide ideias em frases curtas para legendas mais fortes.",
-    format: "vertical",
-    template: "minimal",
-    captionStyle: "bold",
-  };
-
   try {
     const raw = localStorage.getItem("psikorender-create-draft");
-    if (!raw) return fallback;
+    if (!raw) return defaultDraft;
     const parsed = JSON.parse(raw) as Partial<DraftState>;
     return {
-      title: typeof parsed.title === "string" ? parsed.title : fallback.title,
-      text: typeof parsed.text === "string" ? parsed.text : fallback.text,
-      format: isVideoFormat(parsed.format) ? parsed.format : fallback.format,
-      template: isRenderTemplate(parsed.template) ? parsed.template : fallback.template,
-      captionStyle: isCaptionStyle(parsed.captionStyle) ? parsed.captionStyle : fallback.captionStyle,
+      title: typeof parsed.title === "string" ? parsed.title : defaultDraft.title,
+      text: typeof parsed.text === "string" ? parsed.text : defaultDraft.text,
+      format: isVideoFormat(parsed.format) ? parsed.format : defaultDraft.format,
+      template: isRenderTemplate(parsed.template) ? parsed.template : defaultDraft.template,
+      captionStyle: isCaptionStyle(parsed.captionStyle) ? parsed.captionStyle : defaultDraft.captionStyle,
     };
   } catch {
-    return fallback;
+    return defaultDraft;
   }
 }
 
