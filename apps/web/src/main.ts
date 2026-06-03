@@ -369,6 +369,7 @@ function projectCard(project: ProjectRecord) {
       <div class="mt-4 flex flex-wrap gap-3">
         <button class="secondary-button" data-nav="/projects/${encodeURIComponent(project.id)}">Abrir</button>
         <a class="primary-button inline-flex ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+        <button class="secondary-button" data-duplicate-project="${escapeAttr(project.id)}">Duplicar</button>
         <button class="secondary-button" data-reuse-project="${escapeAttr(project.id)}">Reutilizar</button>
         <button class="secondary-button ${isPendingDelete ? "border-sand/70 text-sand" : ""}" data-delete-project="${escapeAttr(project.id)}">${isPendingDelete ? "Confirmar apagar" : "Apagar"}</button>
       </div>
@@ -434,6 +435,7 @@ function projectDetailPage(id: string) {
         <div class="mt-5 grid gap-3">
           <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
           <button class="secondary-button justify-center" data-edit-project="${escapeAttr(project.id)}">${isEditing ? "Fechar edicao" : "Editar metadados"}</button>
+          <button class="secondary-button justify-center" data-duplicate-project="${escapeAttr(project.id)}">Duplicar projeto</button>
           <button class="secondary-button justify-center" data-reuse-project="${escapeAttr(project.id)}">Reutilizar no create</button>
           <button class="secondary-button justify-center" data-export-project="${escapeAttr(project.id)}">Exportar JSON</button>
           <button class="secondary-button justify-center" data-export-captions="${escapeAttr(project.id)}" data-caption-format="srt">Exportar SRT</button>
@@ -545,6 +547,12 @@ function bindSharedEvents() {
     button.addEventListener("click", () => {
       const id = button.dataset.reuseProject;
       if (id) reuseProject(id);
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-duplicate-project]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.duplicateProject;
+      if (id) void duplicateProject(id);
     });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-export-project]").forEach((button) => {
@@ -1325,6 +1333,39 @@ function reuseProject(id: string) {
   navigate("/create");
 }
 
+async function duplicateProject(id: string) {
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) return;
+
+  const extension = project.filename.split(".").pop() || "webm";
+  const copy: ProjectRecord = {
+    ...project,
+    id: crypto.randomUUID(),
+    title: `${project.title} copia`,
+    filename: safeFilename(`${project.title} copia`, extension),
+    createdAt: new Date().toISOString(),
+  };
+
+  const stored = await getStoredProjectRow(id);
+  if (stored?.blob) {
+    await putStoredProject(copy, stored.blob);
+    copy.url = URL.createObjectURL(stored.blob);
+  } else {
+    copy.url = undefined;
+    await putStoredProjectMetadata(copy);
+  }
+
+  state.projects = [copy, ...state.projects].slice(0, 24);
+  state.pendingDeleteId = undefined;
+  state.editingProjectId = undefined;
+  state.status = "Projeto duplicado.";
+  if (projectRouteId(state.path) === id) {
+    history.pushState(null, "", `/projects/${encodeURIComponent(copy.id)}`);
+    state.path = `/projects/${copy.id}`;
+  }
+  render();
+}
+
 async function saveProjectMetadataEdit() {
   const id = state.editingProjectId;
   const project = id ? state.projects.find((item) => item.id === id) : undefined;
@@ -1412,6 +1453,17 @@ async function updateStoredProjectMetadata(project: ProjectRecord) {
     tx.addEventListener("error", () => reject(tx.error));
   });
   db.close();
+}
+
+async function getStoredProjectRow(id: string) {
+  const db = await openProjectDb();
+  const row = await new Promise<(ProjectRecord & { blob?: Blob }) | undefined>((resolve, reject) => {
+    const request = db.transaction("projects", "readonly").objectStore("projects").get(id);
+    request.addEventListener("success", () => resolve(request.result as (ProjectRecord & { blob?: Blob }) | undefined));
+    request.addEventListener("error", () => reject(request.error));
+  });
+  db.close();
+  return row;
 }
 
 async function deleteStoredProject(id: string) {
