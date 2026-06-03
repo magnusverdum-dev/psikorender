@@ -78,6 +78,7 @@ type State = {
   projectFilter: ProjectFilter;
   projectSort: ProjectSort;
   pendingDeleteId?: string;
+  pendingClearProjects: boolean;
   storageReady: boolean;
   status: string;
   progress: number;
@@ -97,6 +98,7 @@ const state: State = {
   projects: [],
   projectFilter: savedProjectView.projectFilter,
   projectSort: savedProjectView.projectSort,
+  pendingClearProjects: false,
   storageReady: false,
   status: "",
   progress: 0,
@@ -114,6 +116,7 @@ function navigate(path: string) {
   history.pushState(null, "", path);
   state.path = path;
   state.pendingDeleteId = undefined;
+  state.pendingClearProjects = false;
   render();
 }
 
@@ -249,7 +252,10 @@ function projectsPage() {
     <section class="mx-auto w-full max-w-6xl px-5 pb-16 pt-6">
       <div class="mb-6 flex items-center justify-between">
         <div><p class="text-sm uppercase tracking-[0.24em] text-aqua">Projetos</p><h1 class="mt-2 text-3xl font-bold">Historico local</h1></div>
-        <button class="primary-button" data-nav="/create">Novo</button>
+        <div class="flex flex-wrap justify-end gap-3">
+          ${state.projects.length ? `<button class="secondary-button ${state.pendingClearProjects ? "border-sand/70 text-sand" : ""}" id="clearProjects">${state.pendingClearProjects ? "Confirmar limpar" : "Limpar historico"}</button>` : ""}
+          <button class="primary-button" data-nav="/create">Novo</button>
+        </div>
       </div>
       ${stats}
       ${controls}
@@ -355,6 +361,9 @@ function bindSharedEvents() {
       const id = button.dataset.reuseProject;
       if (id) reuseProject(id);
     });
+  });
+  document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
+    confirmOrClearProjects();
   });
   const projectFilter = document.querySelector<HTMLSelectElement>("#projectFilter");
   const projectSort = document.querySelector<HTMLSelectElement>("#projectSort");
@@ -745,13 +754,36 @@ async function deleteProject(id: string) {
   render();
 }
 
+async function clearProjects() {
+  state.projects.forEach((project) => {
+    if (project.url) URL.revokeObjectURL(project.url);
+  });
+  await clearStoredProjects();
+  state.projects = [];
+  state.pendingDeleteId = undefined;
+  state.pendingClearProjects = false;
+  render();
+}
+
 function confirmOrDeleteProject(id: string) {
+  state.pendingClearProjects = false;
   if (state.pendingDeleteId === id) {
     void deleteProject(id);
     return;
   }
 
   state.pendingDeleteId = id;
+  render();
+}
+
+function confirmOrClearProjects() {
+  state.pendingDeleteId = undefined;
+  if (state.pendingClearProjects) {
+    void clearProjects();
+    return;
+  }
+
+  state.pendingClearProjects = true;
   render();
 }
 
@@ -816,6 +848,17 @@ async function deleteStoredProject(id: string) {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("projects", "readwrite");
     tx.objectStore("projects").delete(id);
+    tx.addEventListener("complete", () => resolve());
+    tx.addEventListener("error", () => reject(tx.error));
+  });
+  db.close();
+}
+
+async function clearStoredProjects() {
+  const db = await openProjectDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    tx.objectStore("projects").clear();
     tx.addEventListener("complete", () => resolve());
     tx.addEventListener("error", () => reject(tx.error));
   });
