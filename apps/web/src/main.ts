@@ -39,6 +39,14 @@ type ProjectRecord = {
   url?: string;
 };
 
+type DraftState = {
+  title: string;
+  text: string;
+  format: VideoFormat;
+  template: RenderTemplate;
+  captionStyle: CaptionStyle;
+};
+
 type State = {
   path: string;
   title: string;
@@ -62,13 +70,15 @@ type State = {
   busy: boolean;
 };
 
+const savedDraft = loadDraft();
+
 const state: State = {
   path: window.location.pathname,
-  title: "Primeiro video",
-  text: "Escreve aqui o texto do teu video. Divide ideias em frases curtas para legendas mais fortes.",
-  format: "vertical",
-  template: "minimal",
-  captionStyle: "bold",
+  title: savedDraft.title,
+  text: savedDraft.text,
+  format: savedDraft.format,
+  template: savedDraft.template,
+  captionStyle: savedDraft.captionStyle,
   projects: [],
   storageReady: false,
   status: "",
@@ -298,26 +308,31 @@ function bindCreateEvents() {
 
   title?.addEventListener("input", () => {
     state.title = title.value;
+    saveDraft();
     clearRenderedResult();
   });
   text?.addEventListener("input", () => {
     state.text = text.value;
+    saveDraft();
     clearRenderedResult();
     const preview = document.querySelector<HTMLDivElement>("#captionPreview");
     if (preview) preview.textContent = firstSentence(state.text);
   });
   format?.addEventListener("change", () => {
     state.format = format.value as VideoFormat;
+    saveDraft();
     clearRenderedResult();
     updatePreviewAspect();
   });
   template?.addEventListener("change", () => {
     state.template = template.value as RenderTemplate;
+    saveDraft();
     clearRenderedResult();
     updateTemplatePreview();
   });
   captionStyle?.addEventListener("change", () => {
     state.captionStyle = captionStyle.value as CaptionStyle;
+    saveDraft();
     clearRenderedResult();
   });
   audio?.addEventListener("change", () => {
@@ -383,6 +398,7 @@ async function useDemoMedia() {
     if (state.text.startsWith("Escreve aqui")) {
       state.text = "Demo PsikoRender pronta para testar. O video e o audio foram criados neste browser.";
     }
+    saveDraft();
     render();
     setStatus("Media demo carregada. Podes gerar o video.", 0);
   } catch (error) {
@@ -1084,6 +1100,56 @@ function displayMimeType(value: string) {
   if (value.includes("webm")) return "WebM";
   if (value.includes("mp4")) return "MP4";
   return value || "Video";
+}
+
+function loadDraft(): DraftState {
+  const fallback: DraftState = {
+    title: "Primeiro video",
+    text: "Escreve aqui o texto do teu video. Divide ideias em frases curtas para legendas mais fortes.",
+    format: "vertical",
+    template: "minimal",
+    captionStyle: "bold",
+  };
+
+  try {
+    const raw = localStorage.getItem("psikorender-create-draft");
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<DraftState>;
+    return {
+      title: typeof parsed.title === "string" ? parsed.title : fallback.title,
+      text: typeof parsed.text === "string" ? parsed.text : fallback.text,
+      format: isVideoFormat(parsed.format) ? parsed.format : fallback.format,
+      template: isRenderTemplate(parsed.template) ? parsed.template : fallback.template,
+      captionStyle: isCaptionStyle(parsed.captionStyle) ? parsed.captionStyle : fallback.captionStyle,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveDraft() {
+  localStorage.setItem(
+    "psikorender-create-draft",
+    JSON.stringify({
+      title: state.title,
+      text: state.text,
+      format: state.format,
+      template: state.template,
+      captionStyle: state.captionStyle,
+    } satisfies DraftState),
+  );
+}
+
+function isVideoFormat(value: unknown): value is VideoFormat {
+  return value === "vertical" || value === "square" || value === "landscape";
+}
+
+function isRenderTemplate(value: unknown): value is RenderTemplate {
+  return value === "minimal" || value === "cinematic" || value === "manifesto";
+}
+
+function isCaptionStyle(value: unknown): value is CaptionStyle {
+  return value === "minimal" || value === "bold" || value === "karaoke_basic" || value === "manifesto";
 }
 
 function browserCapabilities() {
