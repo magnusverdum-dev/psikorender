@@ -116,6 +116,8 @@ type State = {
   projectSearch: string;
   pendingDeleteId?: string;
   editingProjectId?: string;
+  showDraftSegments: boolean;
+  projectSegmentsId?: string;
   pendingClearProjects: boolean;
   storageReady: boolean;
   status: string;
@@ -140,6 +142,7 @@ const state: State = {
   projectFilter: savedProjectView.projectFilter,
   projectSort: savedProjectView.projectSort,
   projectSearch: savedProjectView.projectSearch,
+  showDraftSegments: false,
   pendingClearProjects: false,
   storageReady: false,
   status: "",
@@ -260,6 +263,15 @@ function createPage() {
             <label class="field-label">Formato<select id="format" class="input">${option("vertical", "9:16", state.format)}${option("square", "1:1", state.format)}${option("landscape", "16:9", state.format)}</select></label>
             <label class="field-label">Template<select id="template" class="input">${option("minimal", "Minimal", state.template)}${option("cinematic", "Cinematic", state.template)}${option("manifesto", "Manifesto", state.template)}</select></label>
             <label class="field-label">Legendas<select id="captionStyle" class="input">${option("minimal", "Minimal", state.captionStyle)}${option("bold", "Bold", state.captionStyle)}${option("karaoke_basic", "Karaoke basico", state.captionStyle)}${option("manifesto", "Manifesto", state.captionStyle)}</select></label>
+          </div>
+          <div class="rounded-md border border-white/10 bg-white/10 p-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <span class="text-sm font-semibold text-white">Segmentos estimados</span>
+              <button id="toggleDraftSegments" class="secondary-button px-3 py-2 text-sm" type="button">${state.showDraftSegments ? "Esconder segmentos" : "Ver segmentos"}</button>
+            </div>
+            <div id="draftSegmentsPanel" class="${state.showDraftSegments ? "mt-3" : "hidden"}">
+              ${state.showDraftSegments ? captionSegmentsHtml(state.text, draftCaptionDuration()) : ""}
+            </div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
             <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
@@ -396,6 +408,7 @@ function projectDetailPage(id: string) {
   const disabled = project.url ? "" : "pointer-events-none opacity-60";
   const isPendingDelete = state.pendingDeleteId === project.id;
   const isEditing = state.editingProjectId === project.id;
+  const showSegments = state.projectSegmentsId === project.id;
   const media = project.url
     ? `<video class="aspect-video w-full rounded-md bg-abyss object-contain" src="${escapeAttr(project.url)}" controls playsinline ${project.thumbnailUrl ? `poster="${escapeAttr(project.thumbnailUrl)}"` : ""}></video>`
     : project.thumbnailUrl
@@ -417,6 +430,15 @@ function projectDetailPage(id: string) {
         <div class="mt-5 rounded-md border border-white/10 bg-white/10 p-4">
           <h2 class="font-semibold text-white">Texto</h2>
           <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/80">${escapeHtml(project.text)}</p>
+        </div>
+        <div class="mt-5 rounded-md border border-white/10 bg-white/10 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-semibold text-white">Segmentos de legenda</h2>
+            <button class="secondary-button px-3 py-2 text-sm" type="button" data-toggle-project-segments="${escapeAttr(project.id)}">${showSegments ? "Esconder segmentos" : "Ver segmentos"}</button>
+          </div>
+          <div class="${showSegments ? "mt-3" : "hidden"}">
+            ${showSegments ? captionSegmentsHtml(project.text, project.duration) : ""}
+          </div>
         </div>
         ${isEditing ? projectEditForm(project) : ""}
       </div>
@@ -555,6 +577,13 @@ function bindSharedEvents() {
       if (id) void duplicateProject(id);
     });
   });
+  document.querySelectorAll<HTMLButtonElement>("[data-toggle-project-segments]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.toggleProjectSegments;
+      state.projectSegmentsId = state.projectSegmentsId === id ? undefined : id;
+      render();
+    });
+  });
   document.querySelectorAll<HTMLButtonElement>("[data-export-project]").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset.exportProject;
@@ -638,6 +667,7 @@ function bindCreateEvents() {
   const generate = document.querySelector<HTMLButtonElement>("#generate");
   const exportDraftSrt = document.querySelector<HTMLButtonElement>("#exportDraftSrt");
   const exportDraftAss = document.querySelector<HTMLButtonElement>("#exportDraftAss");
+  const toggleDraftSegments = document.querySelector<HTMLButtonElement>("#toggleDraftSegments");
   const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-script-preset]");
 
   title?.addEventListener("input", () => {
@@ -652,6 +682,7 @@ function bindCreateEvents() {
     const preview = document.querySelector<HTMLDivElement>("#captionPreview");
     if (preview) preview.textContent = firstSentence(state.text);
     updateSegmentEstimate();
+    refreshDraftSegments();
   });
   format?.addEventListener("change", () => {
     state.format = format.value as VideoFormat;
@@ -710,6 +741,10 @@ function bindCreateEvents() {
   });
   exportDraftAss?.addEventListener("click", () => {
     exportDraftCaptions("ass");
+  });
+  toggleDraftSegments?.addEventListener("click", () => {
+    state.showDraftSegments = !state.showDraftSegments;
+    render();
   });
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -1875,9 +1910,35 @@ function captionEstimateText() {
   return `${segments.length || 1} blocos | ${words} palavras`;
 }
 
+function draftCaptionDuration() {
+  return state.renderedDuration || estimateDraftCaptionDuration(state.text);
+}
+
+function captionSegmentsHtml(text: string, duration: number) {
+  const segments = buildSegments(text, Math.max(1, duration));
+  return `
+    <div class="grid gap-2">
+      ${segments.map((segment, index) => `
+        <div class="rounded-md border border-white/10 bg-abyss/45 p-3 text-sm">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-[0.14em] text-aqua">
+            <span>Bloco ${index + 1}</span>
+            <span>${formatSrtTime(segment.start)} - ${formatSrtTime(segment.end)}</span>
+          </div>
+          <p class="mt-2 leading-6 text-white/80">${escapeHtml(segment.text)}</p>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function updateSegmentEstimate() {
   const estimate = document.querySelector<HTMLSpanElement>("#segmentEstimate");
   if (estimate) estimate.textContent = captionEstimateText();
+}
+
+function refreshDraftSegments() {
+  const panel = document.querySelector<HTMLDivElement>("#draftSegmentsPanel");
+  if (panel && state.showDraftSegments) panel.innerHTML = captionSegmentsHtml(state.text, draftCaptionDuration());
 }
 
 function startRenderLog() {
