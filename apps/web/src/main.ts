@@ -5,6 +5,7 @@ type CaptionStyle = "minimal" | "bold" | "karaoke_basic" | "manifesto";
 type RenderTemplate = "minimal" | "cinematic" | "manifesto";
 type ProjectFilter = "all" | VideoFormat;
 type ProjectSort = "newest" | "oldest" | "largest";
+type ScriptPresetId = "story" | "manifesto" | "calm";
 
 const AUDIO_UPLOAD = {
   label: "WAV, MP3, M4A ou AAC ate 50 MB",
@@ -27,6 +28,40 @@ const defaultDraft: DraftState = {
   template: "minimal",
   captionStyle: "bold",
 };
+
+const scriptPresets: Array<{
+  id: ScriptPresetId;
+  label: string;
+  title: string;
+  text: string;
+  template: RenderTemplate;
+  captionStyle: CaptionStyle;
+}> = [
+  {
+    id: "story",
+    label: "Historia curta",
+    title: "Historia rapida",
+    text: "Comeca com uma imagem simples. Mostra o conflito numa frase. Fecha com uma ideia que fica na cabeca.",
+    template: "cinematic",
+    captionStyle: "bold",
+  },
+  {
+    id: "manifesto",
+    label: "Manifesto",
+    title: "Manifesto",
+    text: "Nao esperes pelo momento perfeito. Escolhe uma direcao. Faz hoje uma versao pequena, mas real.",
+    template: "manifesto",
+    captionStyle: "manifesto",
+  },
+  {
+    id: "calm",
+    label: "Calmo",
+    title: "Respirar",
+    text: "Respira fundo. Volta ao essencial. Um passo limpo vale mais do que dez ideias por acabar.",
+    template: "minimal",
+    captionStyle: "minimal",
+  },
+];
 
 type Segment = {
   text: string;
@@ -209,6 +244,15 @@ function createPage() {
         <div class="mt-5 grid gap-4">
           <label class="field-label">Titulo<input id="title" class="input" value="${escapeAttr(state.title)}" autocomplete="off" /></label>
           <label class="field-label">Texto<textarea id="text" class="input min-h-44 resize-y">${escapeHtml(state.text)}</textarea></label>
+          <div class="rounded-md border border-white/10 bg-white/10 p-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <span class="text-sm font-semibold text-white">Presets de guiao</span>
+              <span id="segmentEstimate" class="text-xs uppercase tracking-[0.16em] text-aqua">${captionEstimateText()}</span>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              ${scriptPresets.map((preset) => `<button class="secondary-button px-3 py-2 text-sm" type="button" data-script-preset="${preset.id}">${escapeHtml(preset.label)}</button>`).join("")}
+            </div>
+          </div>
           <div class="grid gap-4 md:grid-cols-3">
             <label class="field-label">Formato<select id="format" class="input">${option("vertical", "9:16", state.format)}${option("square", "1:1", state.format)}${option("landscape", "16:9", state.format)}</select></label>
             <label class="field-label">Template<select id="template" class="input">${option("minimal", "Minimal", state.template)}${option("cinematic", "Cinematic", state.template)}${option("manifesto", "Manifesto", state.template)}</select></label>
@@ -525,6 +569,7 @@ function bindCreateEvents() {
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
   const clearDraft = document.querySelector<HTMLButtonElement>("#clearDraft");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
+  const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-script-preset]");
 
   title?.addEventListener("input", () => {
     state.title = title.value;
@@ -537,6 +582,7 @@ function bindCreateEvents() {
     clearRenderedResult();
     const preview = document.querySelector<HTMLDivElement>("#captionPreview");
     if (preview) preview.textContent = firstSentence(state.text);
+    updateSegmentEstimate();
   });
   format?.addEventListener("change", () => {
     state.format = format.value as VideoFormat;
@@ -590,6 +636,25 @@ function bindCreateEvents() {
   generate?.addEventListener("click", () => {
     void generateVideo();
   });
+  presetButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      applyScriptPreset(button.dataset.scriptPreset);
+    });
+  });
+}
+
+function applyScriptPreset(id: string | undefined) {
+  const preset = scriptPresets.find((item) => item.id === id);
+  if (!preset) return;
+
+  clearRenderedResult();
+  state.title = preset.title;
+  state.text = preset.text;
+  state.template = preset.template;
+  state.captionStyle = preset.captionStyle;
+  saveDraft();
+  render();
+  setStatus(`Preset aplicado: ${preset.label}.`, state.progress);
 }
 
 function setAudioFile(file: File) {
@@ -1507,6 +1572,17 @@ function setStatus(message: string, progress: number) {
   const bar = document.querySelector<HTMLDivElement>("#progressBar");
   if (status) status.textContent = message;
   if (bar) bar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+}
+
+function captionEstimateText() {
+  const segments = splitSentences(state.text);
+  const words = state.text.trim().split(/\s+/).filter(Boolean).length;
+  return `${segments.length || 1} blocos | ${words} palavras`;
+}
+
+function updateSegmentEstimate() {
+  const estimate = document.querySelector<HTMLSpanElement>("#segmentEstimate");
+  if (estimate) estimate.textContent = captionEstimateText();
 }
 
 function startRenderLog() {
