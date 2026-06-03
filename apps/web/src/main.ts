@@ -259,6 +259,8 @@ function projectsPage() {
         <div><p class="text-sm uppercase tracking-[0.24em] text-aqua">Projetos</p><h1 class="mt-2 text-3xl font-bold">Historico local</h1></div>
         <div class="flex flex-wrap justify-end gap-3">
           ${state.projects.length ? `<button class="secondary-button" id="exportProjects" type="button">Exportar JSON</button>` : ""}
+          <button class="secondary-button" id="importProjects" type="button">Importar JSON</button>
+          <input id="importProjectsFile" class="hidden" type="file" accept=".json,application/json" />
           ${state.projects.length ? `<button class="secondary-button ${state.pendingClearProjects ? "border-sand/70 text-sand" : ""}" id="clearProjects">${state.pendingClearProjects ? "Confirmar limpar" : "Limpar historico"}</button>` : ""}
           <button class="primary-button" data-nav="/create">Novo</button>
         </div>
@@ -377,6 +379,15 @@ function bindSharedEvents() {
   });
   document.querySelector<HTMLButtonElement>("#exportProjects")?.addEventListener("click", () => {
     exportProjectsJson();
+  });
+  const importProjectsFile = document.querySelector<HTMLInputElement>("#importProjectsFile");
+  document.querySelector<HTMLButtonElement>("#importProjects")?.addEventListener("click", () => {
+    importProjectsFile?.click();
+  });
+  importProjectsFile?.addEventListener("change", () => {
+    const file = importProjectsFile.files?.[0];
+    if (file) void importProjectsJson(file);
+    importProjectsFile.value = "";
   });
   document.querySelector<HTMLButtonElement>("#resetProjectView")?.addEventListener("click", () => {
     resetProjectView();
@@ -848,6 +859,54 @@ function exportProjectsJson() {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function importProjectsJson(file: File) {
+  try {
+    const payload = JSON.parse(await file.text()) as { projects?: unknown };
+    if (!Array.isArray(payload.projects)) throw new Error("JSON sem lista de projetos.");
+    const imported = payload.projects.map(normalizeImportedProject).filter(Boolean) as ProjectRecord[];
+    if (!imported.length) throw new Error("Nao foram encontrados projetos validos.");
+
+    for (const project of imported) {
+      await putStoredProjectMetadata(project);
+    }
+    state.projects = await listStoredProjects();
+    state.pendingClearProjects = false;
+    state.pendingDeleteId = undefined;
+    render();
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Falha ao importar JSON.");
+  }
+}
+
+function normalizeImportedProject(value: unknown): ProjectRecord | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.title !== "string" || typeof item.text !== "string") return undefined;
+
+  const format = isVideoFormat(item.format) ? item.format : "vertical";
+  const template = parseRenderTemplate(item.template);
+  const captionStyle = isCaptionStyle(item.captionStyle) ? item.captionStyle : "bold";
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString();
+  const filename = typeof item.filename === "string" ? item.filename : safeFilename(item.title, "webm");
+  const mimeType = typeof item.mimeType === "string" ? item.mimeType : "video/webm";
+  const size = typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, item.size) : 0;
+  const duration = typeof item.duration === "number" && Number.isFinite(item.duration) ? Math.max(1, item.duration) : 1;
+
+  return {
+    id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
+    title: item.title,
+    text: item.text,
+    format,
+    template,
+    captionStyle,
+    filename,
+    mimeType,
+    size,
+    duration,
+    createdAt,
+  };
+}
+
 function reuseProject(id: string) {
   const project = state.projects.find((item) => item.id === id);
   if (!project) return;
@@ -898,6 +957,17 @@ async function putStoredProject(project: ProjectRecord, blob: Blob) {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("projects", "readwrite");
     tx.objectStore("projects").put({ ...project, url: undefined, blob });
+    tx.addEventListener("complete", () => resolve());
+    tx.addEventListener("error", () => reject(tx.error));
+  });
+  db.close();
+}
+
+async function putStoredProjectMetadata(project: ProjectRecord) {
+  const db = await openProjectDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    tx.objectStore("projects").put({ ...project, url: undefined });
     tx.addEventListener("complete", () => resolve());
     tx.addEventListener("error", () => reject(tx.error));
   });
@@ -1375,6 +1445,12 @@ function isVideoFormat(value: unknown): value is VideoFormat {
 
 function isRenderTemplate(value: unknown): value is RenderTemplate {
   return value === "minimal" || value === "cinematic" || value === "manifesto";
+}
+
+function parseRenderTemplate(value: unknown): RenderTemplate {
+  if (isRenderTemplate(value)) return value;
+  if (value === "ocean") return "cinematic";
+  return "minimal";
 }
 
 function isCaptionStyle(value: unknown): value is CaptionStyle {
