@@ -7,7 +7,7 @@ type ProjectFilter = "all" | VideoFormat;
 type ProjectStatusFilter = "all" | "video" | "metadata";
 type ProjectSort = "newest" | "oldest" | "largest";
 type ScriptPresetId = "story" | "manifesto" | "calm";
-type VoiceProvider = "stub" | "xtts" | "f5" | "piper" | "openvoice";
+type VoiceProvider = "stub" | "fish_speech" | "f5" | "piper" | "openvoice";
 type RenderMode = "browser" | "backend";
 
 const AUDIO_UPLOAD = {
@@ -95,6 +95,16 @@ type RenderJobSnapshot = {
   completedAt?: string;
 };
 
+type VoiceProfile = {
+  id: string;
+  name: string;
+  provider: VoiceProvider;
+  referenceAsset: SourceMediaAsset;
+  referenceTranscript: string;
+  consentConfirmed: boolean;
+  createdAt: string;
+};
+
 type ProjectRecord = {
   id: string;
   title: string;
@@ -173,6 +183,9 @@ type State = {
   renderLogs: string[];
   settings: LocalSettings;
   settingsStatus: string;
+  voiceProfiles: VoiceProfile[];
+  selectedVoiceProfileId?: string;
+  voiceProfileStatus: string;
   storageEstimate?: { usage: number; quota: number };
   storageStatus: string;
   busy: boolean;
@@ -181,6 +194,7 @@ type State = {
 const savedDraft = loadDraft();
 const savedProjectView = loadProjectView();
 const savedSettings = loadSettings();
+const savedVoiceProfiles = loadVoiceProfiles();
 
 const state: State = {
   path: window.location.pathname,
@@ -205,6 +219,9 @@ const state: State = {
   renderLogs: [],
   settings: savedSettings,
   settingsStatus: "",
+  voiceProfiles: savedVoiceProfiles,
+  selectedVoiceProfileId: savedVoiceProfiles[0]?.id,
+  voiceProfileStatus: "",
   storageStatus: "",
   busy: false,
 };
@@ -338,6 +355,13 @@ function createPage() {
           <div class="grid gap-4 md:grid-cols-2">
             <label class="upload-box"><span>Audio de voz</span><input id="audio" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small id="audioLabel">${AUDIO_UPLOAD.label}</small></label>
             <label class="upload-box"><span>Video de fundo</span><input id="background" type="file" accept=".mp4,.mov,.webm,video/*" /><small id="backgroundLabel">${BACKGROUND_UPLOAD.label}</small></label>
+          </div>
+          <div class="rounded-md border border-white/10 bg-white/10 p-3">
+            <div class="grid gap-3 sm:grid-cols-[1fr_auto]">
+              <label class="field-label">Minha voz<select id="voiceProfileSelect" class="input">${voiceProfileSelectOptions()}</select></label>
+              <button id="generateAiVoice" class="secondary-button self-end justify-center" type="button">Gerar voz IA</button>
+            </div>
+            <p class="mt-2 text-xs leading-5 text-white/65">Demo local: gera WAV placeholder no browser. Para Fish/F5/OpenVoice real e clonagem de voz, liga o voice-worker local/GPU.</p>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <button id="demoMedia" class="secondary-button w-full justify-center" type="button">Usar media demo</button>
@@ -555,7 +579,7 @@ function projectEditForm(project: ProjectRecord) {
           <label class="field-label">Legendas<select id="editProjectCaptionStyle" class="input">${option("minimal", "Minimal", project.captionStyle)}${option("bold", "Bold", project.captionStyle)}${option("karaoke_basic", "Karaoke basico", project.captionStyle)}${option("manifesto", "Manifesto", project.captionStyle)}</select></label>
         </div>
         <div class="grid gap-4 md:grid-cols-3">
-          <label class="field-label">Provider voz<select id="editProjectVoiceProvider" class="input">${option("stub", "Upload manual", project.voiceProvider || defaultSettings.voiceProvider)}${option("xtts", "XTTS-v2", project.voiceProvider || defaultSettings.voiceProvider)}${option("f5", "F5-TTS", project.voiceProvider || defaultSettings.voiceProvider)}${option("piper", "Piper", project.voiceProvider || defaultSettings.voiceProvider)}${option("openvoice", "OpenVoice", project.voiceProvider || defaultSettings.voiceProvider)}</select></label>
+          <label class="field-label">Provider voz<select id="editProjectVoiceProvider" class="input">${voiceProviderOptions(project.voiceProvider || defaultSettings.voiceProvider)}</select></label>
           <label class="field-label">Voz<input id="editProjectVoiceName" class="input" value="${escapeAttr(project.voiceName || defaultSettings.voiceName)}" autocomplete="off" /></label>
           <label class="field-label">Render<select id="editProjectRenderMode" class="input">${option("browser", "Browser local", project.renderMode || defaultSettings.renderMode)}${option("backend", "Backend futuro", project.renderMode || defaultSettings.renderMode)}</select></label>
         </div>
@@ -632,6 +656,42 @@ function renderJobPanel(project: ProjectRecord) {
   `;
 }
 
+function voiceProviderOptions(current: VoiceProvider) {
+  return [
+    option("stub", "Upload manual", current),
+    option("fish_speech", "Fish Speech S2", current),
+    option("f5", "F5-TTS", current),
+    option("openvoice", "OpenVoice", current),
+    option("piper", "Piper", current),
+  ].join("");
+}
+
+function voiceProfileSummary() {
+  return state.voiceProfiles.length
+    ? `${state.voiceProfiles.length} perfil de voz guardado localmente.`
+    : "Ainda sem perfis de voz. Guarda uma amostra autorizada para usar Gerar voz IA.";
+}
+
+function voiceProfilesHtml() {
+  if (!state.voiceProfiles.length) return `<p class="text-sm text-white/60">Sem perfis guardados.</p>`;
+  return state.voiceProfiles.map((profile) => `
+    <div class="rounded-md border border-white/10 bg-abyss/45 p-3 text-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="font-semibold text-white">${escapeHtml(profile.name)}</span>
+        <span class="rounded-md bg-white/10 px-2 py-1 text-xs uppercase tracking-[0.14em] text-aqua">${escapeHtml(displayVoiceProvider(profile.provider))}</span>
+      </div>
+      <p class="mt-1 text-white/65">${escapeHtml(profile.referenceAsset.name)} | ${formatBytes(profile.referenceAsset.size)}</p>
+    </div>
+  `).join("");
+}
+
+function voiceProfileSelectOptions() {
+  if (!state.voiceProfiles.length) return `<option value="">Sem perfil guardado</option>`;
+  return state.voiceProfiles
+    .map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.selectedVoiceProfileId ? "selected" : ""}>${escapeHtml(profile.name)} | ${escapeHtml(displayVoiceProvider(profile.provider))}</option>`)
+    .join("");
+}
+
 function filteredProjects() {
   const search = state.projectSearch.trim().toLowerCase();
   const byFormat =
@@ -661,7 +721,7 @@ function settingsPage() {
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Settings</p>
         <h1 class="mt-2 text-3xl font-bold">Voz e modelos locais</h1>
         <form id="settingsForm" class="mt-6 grid gap-4">
-          <label class="field-label">Provider de voz<select id="voiceProvider" class="input">${option("stub", "Upload manual", state.settings.voiceProvider)}${option("xtts", "XTTS-v2", state.settings.voiceProvider)}${option("f5", "F5-TTS", state.settings.voiceProvider)}${option("piper", "Piper", state.settings.voiceProvider)}${option("openvoice", "OpenVoice", state.settings.voiceProvider)}</select></label>
+          <label class="field-label">Provider de voz<select id="voiceProvider" class="input">${voiceProviderOptions(state.settings.voiceProvider)}</select></label>
           <label class="field-label">Nome da voz<input id="voiceName" class="input" value="${escapeAttr(state.settings.voiceName)}" autocomplete="off" /></label>
           <div class="grid gap-4 md:grid-cols-2">
             <label class="field-label">Ollama endpoint<input id="ollamaEndpoint" class="input" value="${escapeAttr(state.settings.ollamaEndpoint)}" autocomplete="off" /></label>
@@ -674,6 +734,20 @@ function settingsPage() {
           </div>
           <p id="settingsStatus" class="rounded-md bg-white/10 p-3 text-sm text-white/80">${escapeHtml(state.settingsStatus || "Settings locais guardadas neste browser.")}</p>
         </form>
+        <div class="mt-6 rounded-md border border-white/10 bg-white/10 p-4">
+          <h2 class="text-xl font-semibold text-white">Minha voz</h2>
+          <p class="mt-2 text-sm text-white/70">Guarda um perfil local para o futuro worker Fish/F5/OpenVoice. A demo atual gera um WAV placeholder no browser para validar o fluxo.</p>
+          <form id="voiceProfileForm" class="mt-4 grid gap-4">
+            <label class="field-label">Nome do perfil<input id="voiceProfileName" class="input" value="${escapeAttr(state.settings.voiceName)}" autocomplete="off" /></label>
+            <label class="field-label">Provider<select id="voiceProfileProvider" class="input">${voiceProviderOptions(state.settings.voiceProvider === "stub" ? "fish_speech" : state.settings.voiceProvider)}</select></label>
+            <label class="field-label">Transcricao da amostra<textarea id="voiceProfileTranscript" class="input min-h-24 resize-y" placeholder="Transcreve o que dizes na amostra de voz"></textarea></label>
+            <label class="upload-box"><span>Amostra de voz</span><input id="voiceReference" type="file" accept=".wav,.mp3,.m4a,.aac,audio/*" /><small>30-90s limpos, idealmente WAV mono</small></label>
+            <label class="flex items-start gap-3 rounded-md bg-abyss/45 p-3 text-sm text-white/80"><input id="voiceConsent" class="mt-1" type="checkbox" /> Confirmo que esta voz e minha ou tenho autorizacao para a usar.</label>
+            <button class="primary-button justify-center" type="submit">Guardar minha voz</button>
+            <p id="voiceProfileStatus" class="rounded-md bg-white/10 p-3 text-sm text-white/80">${escapeHtml(state.voiceProfileStatus || voiceProfileSummary())}</p>
+          </form>
+          <div class="mt-4 grid gap-2">${voiceProfilesHtml()}</div>
+        </div>
       </div>
       <aside class="glass-panel p-6">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Browser</p>
@@ -817,6 +891,10 @@ function bindSharedEvents() {
     event.preventDefault();
     saveSettingsFromForm();
   });
+  document.querySelector<HTMLFormElement>("#voiceProfileForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveVoiceProfileFromForm();
+  });
   document.querySelector<HTMLButtonElement>("#resetSettings")?.addEventListener("click", () => {
     state.settings = { ...defaultSettings };
     state.settingsStatus = "Settings repostas.";
@@ -877,9 +955,11 @@ function bindCreateEvents() {
   const template = document.querySelector<HTMLSelectElement>("#template");
   const captionStyle = document.querySelector<HTMLSelectElement>("#captionStyle");
   const captionsFile = document.querySelector<HTMLInputElement>("#captionsFile");
+  const voiceProfileSelect = document.querySelector<HTMLSelectElement>("#voiceProfileSelect");
   const audio = document.querySelector<HTMLInputElement>("#audio");
   const background = document.querySelector<HTMLInputElement>("#background");
   const demoMedia = document.querySelector<HTMLButtonElement>("#demoMedia");
+  const generateAiVoice = document.querySelector<HTMLButtonElement>("#generateAiVoice");
   const clearDraft = document.querySelector<HTMLButtonElement>("#clearDraft");
   const generate = document.querySelector<HTMLButtonElement>("#generate");
   const saveDraftProjectButton = document.querySelector<HTMLButtonElement>("#saveDraftProject");
@@ -928,6 +1008,9 @@ function bindCreateEvents() {
     if (file) void importSrtFile(file);
     captionsFile.value = "";
   });
+  voiceProfileSelect?.addEventListener("change", () => {
+    state.selectedVoiceProfileId = voiceProfileSelect.value || undefined;
+  });
   audio?.addEventListener("change", () => {
     const file = audio.files?.[0];
     if (!file) return;
@@ -956,6 +1039,9 @@ function bindCreateEvents() {
   });
   demoMedia?.addEventListener("click", () => {
     void useDemoMedia();
+  });
+  generateAiVoice?.addEventListener("click", () => {
+    void generateAiVoiceAudio();
   });
   clearDraft?.addEventListener("click", () => {
     resetCreateDraft();
@@ -1053,6 +1139,35 @@ async function importSrtFile(file: File) {
     setStatus(`SRT importado com ${segments.length} segmentos.`, state.progress);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Falha ao importar SRT.", 0);
+  }
+}
+
+async function generateAiVoiceAudio() {
+  if (state.busy) return;
+  const profile = state.voiceProfiles.find((item) => item.id === state.selectedVoiceProfileId);
+  if (!profile) {
+    setStatus("Cria primeiro um perfil em Settings > Minha voz.", 0);
+    navigate("/settings");
+    return;
+  }
+  if (state.text.trim().length < 10) {
+    setStatus("Escreve o script antes de gerar voz IA.", 0);
+    return;
+  }
+
+  setBusy(true);
+  setStatus(`A gerar WAV local para ${profile.name}...`, 12);
+  try {
+    const file = await createAiVoicePlaceholderFile(state.text, profile);
+    setAudioFile(file);
+    state.settings.voiceProvider = profile.provider;
+    state.settings.voiceName = profile.name;
+    saveSettings();
+    setStatus(`Voz IA demo gerada com ${displayVoiceProvider(profile.provider)}. Podes renderizar o video.`, 0);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Falha ao gerar voz IA.", 0);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -1966,6 +2081,30 @@ async function createDemoAudioFile() {
   return new File([blob], "psikorender-demo-voice.wav", { type: "audio/wav" });
 }
 
+async function createAiVoicePlaceholderFile(text: string, profile: VoiceProfile) {
+  const sampleRate = 44100;
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const duration = Math.max(2.5, Math.min(18, words * 0.36));
+  const samples = Math.floor(sampleRate * duration);
+  const pcm = new Int16Array(samples);
+  const providerShift = profile.provider === "fish_speech" ? 0 : profile.provider === "f5" ? 24 : profile.provider === "openvoice" ? 48 : 72;
+
+  for (let index = 0; index < samples; index += 1) {
+    const t = index / sampleRate;
+    const wordPulse = 0.55 + 0.45 * Math.sin(2 * Math.PI * 3.6 * t);
+    const envelope = Math.min(1, t * 4, (duration - t) * 4);
+    const base = 165 + providerShift + 22 * Math.sin(2 * Math.PI * 0.9 * t);
+    const tone =
+      Math.sin(2 * Math.PI * base * t) * 0.38 +
+      Math.sin(2 * Math.PI * (base * 1.95) * t) * 0.16 +
+      Math.sin(2 * Math.PI * (base * 2.9) * t) * 0.08;
+    pcm[index] = Math.max(-1, Math.min(1, tone * wordPulse * envelope)) * 0x7fff;
+  }
+
+  const blob = new Blob([wavHeader(samples, sampleRate), pcm], { type: "audio/wav" });
+  return new File([blob], safeFilename(`${profile.name}-ai-voice`, "wav"), { type: "audio/wav" });
+}
+
 async function createDemoBackgroundFile() {
   if (!("MediaRecorder" in window)) {
     throw new Error("Este browser nao suporta criacao de video demo.");
@@ -2493,7 +2632,7 @@ function displayMimeType(value: string) {
 function displayVoiceProvider(value: VoiceProvider | undefined) {
   const provider = value || defaultSettings.voiceProvider;
   if (provider === "stub") return "Upload manual";
-  if (provider === "xtts") return "XTTS-v2";
+  if (provider === "fish_speech") return "Fish Speech S2";
   if (provider === "f5") return "F5-TTS";
   if (provider === "piper") return "Piper";
   return "OpenVoice";
@@ -2556,6 +2695,49 @@ function saveSettingsFromForm() {
   render();
 }
 
+function saveVoiceProfileFromForm() {
+  const name = document.querySelector<HTMLInputElement>("#voiceProfileName")?.value.trim() || "Minha voz";
+  const providerValue = document.querySelector<HTMLSelectElement>("#voiceProfileProvider")?.value;
+  const transcript = document.querySelector<HTMLTextAreaElement>("#voiceProfileTranscript")?.value.trim() || "";
+  const file = document.querySelector<HTMLInputElement>("#voiceReference")?.files?.[0];
+  const consent = Boolean(document.querySelector<HTMLInputElement>("#voiceConsent")?.checked);
+
+  if (!file) {
+    state.voiceProfileStatus = "Carrega uma amostra de voz.";
+    render();
+    return;
+  }
+  const error = validateUpload(file, AUDIO_UPLOAD);
+  if (error) {
+    state.voiceProfileStatus = error;
+    render();
+    return;
+  }
+  if (!consent) {
+    state.voiceProfileStatus = "Confirma que tens autorizacao para usar esta voz.";
+    render();
+    return;
+  }
+
+  const profile: VoiceProfile = {
+    id: crypto.randomUUID(),
+    name,
+    provider: isVoiceProvider(providerValue) && providerValue !== "stub" ? providerValue : "fish_speech",
+    referenceAsset: fileToSourceAsset(file, "audio"),
+    referenceTranscript: transcript,
+    consentConfirmed: consent,
+    createdAt: new Date().toISOString(),
+  };
+  state.voiceProfiles = [profile, ...state.voiceProfiles].slice(0, 8);
+  state.selectedVoiceProfileId = profile.id;
+  state.settings.voiceProvider = profile.provider;
+  state.settings.voiceName = profile.name;
+  state.voiceProfileStatus = `Perfil "${profile.name}" guardado localmente.`;
+  saveSettings();
+  saveVoiceProfiles();
+  render();
+}
+
 function loadSettings(): LocalSettings {
   try {
     const raw = localStorage.getItem("psikorender-local-settings");
@@ -2577,6 +2759,39 @@ function saveSettings() {
   localStorage.setItem("psikorender-local-settings", JSON.stringify(state.settings));
 }
 
+function loadVoiceProfiles(): VoiceProfile[] {
+  try {
+    const raw = localStorage.getItem("psikorender-voice-profiles");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeVoiceProfile).filter(Boolean) as VoiceProfile[];
+  } catch {
+    return [];
+  }
+}
+
+function saveVoiceProfiles() {
+  localStorage.setItem("psikorender-voice-profiles", JSON.stringify(state.voiceProfiles));
+}
+
+function normalizeVoiceProfile(value: unknown): VoiceProfile | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Record<string, unknown>;
+  const referenceAsset = normalizeSourceAsset(item.referenceAsset, "audio");
+  if (!referenceAsset) return undefined;
+  const provider = isVoiceProvider(item.provider) && item.provider !== "stub" ? item.provider : "fish_speech";
+  return {
+    id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
+    name: typeof item.name === "string" && item.name.trim() ? item.name : "Minha voz",
+    provider,
+    referenceAsset,
+    referenceTranscript: typeof item.referenceTranscript === "string" ? item.referenceTranscript : "",
+    consentConfirmed: item.consentConfirmed === true,
+    createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+  };
+}
+
 function isVideoFormat(value: unknown): value is VideoFormat {
   return value === "vertical" || value === "square" || value === "landscape";
 }
@@ -2596,7 +2811,7 @@ function isCaptionStyle(value: unknown): value is CaptionStyle {
 }
 
 function isVoiceProvider(value: unknown): value is VoiceProvider {
-  return value === "stub" || value === "xtts" || value === "f5" || value === "piper" || value === "openvoice";
+  return value === "stub" || value === "fish_speech" || value === "f5" || value === "piper" || value === "openvoice";
 }
 
 function isRenderMode(value: unknown): value is RenderMode {
