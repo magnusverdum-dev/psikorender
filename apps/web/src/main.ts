@@ -115,6 +115,7 @@ type State = {
   projectSort: ProjectSort;
   projectSearch: string;
   pendingDeleteId?: string;
+  editingProjectId?: string;
   pendingClearProjects: boolean;
   storageReady: boolean;
   status: string;
@@ -159,6 +160,7 @@ function navigate(path: string) {
   history.pushState(null, "", path);
   state.path = path;
   state.pendingDeleteId = undefined;
+  state.editingProjectId = undefined;
   state.pendingClearProjects = false;
   render();
 }
@@ -392,6 +394,7 @@ function projectDetailPage(id: string) {
   const href = project.url || "#";
   const disabled = project.url ? "" : "pointer-events-none opacity-60";
   const isPendingDelete = state.pendingDeleteId === project.id;
+  const isEditing = state.editingProjectId === project.id;
   const media = project.url
     ? `<video class="aspect-video w-full rounded-md bg-abyss object-contain" src="${escapeAttr(project.url)}" controls playsinline ${project.thumbnailUrl ? `poster="${escapeAttr(project.thumbnailUrl)}"` : ""}></video>`
     : project.thumbnailUrl
@@ -414,6 +417,7 @@ function projectDetailPage(id: string) {
           <h2 class="font-semibold text-white">Texto</h2>
           <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/80">${escapeHtml(project.text)}</p>
         </div>
+        ${isEditing ? projectEditForm(project) : ""}
       </div>
       <aside class="glass-panel p-5">
         <p class="text-sm uppercase tracking-[0.24em] text-aqua">Metadados</p>
@@ -429,6 +433,7 @@ function projectDetailPage(id: string) {
         </div>
         <div class="mt-5 grid gap-3">
           <a class="primary-button inline-flex justify-center ${disabled}" href="${href}" download="${escapeAttr(project.filename)}">Download</a>
+          <button class="secondary-button justify-center" data-edit-project="${escapeAttr(project.id)}">${isEditing ? "Fechar edicao" : "Editar metadados"}</button>
           <button class="secondary-button justify-center" data-reuse-project="${escapeAttr(project.id)}">Reutilizar no create</button>
           <button class="secondary-button justify-center" data-export-project="${escapeAttr(project.id)}">Exportar JSON</button>
           <button class="secondary-button justify-center" data-export-captions="${escapeAttr(project.id)}" data-caption-format="srt">Exportar SRT</button>
@@ -437,6 +442,27 @@ function projectDetailPage(id: string) {
         </div>
       </aside>
     </section>
+  `;
+}
+
+function projectEditForm(project: ProjectRecord) {
+  return `
+    <form id="projectEditForm" class="mt-5 rounded-md border border-sand/30 bg-white/10 p-4">
+      <h2 class="font-semibold text-white">Editar metadados</h2>
+      <div class="mt-4 grid gap-4">
+        <label class="field-label">Titulo<input id="editProjectTitle" class="input" value="${escapeAttr(project.title)}" autocomplete="off" /></label>
+        <label class="field-label">Texto<textarea id="editProjectText" class="input min-h-36 resize-y">${escapeHtml(project.text)}</textarea></label>
+        <div class="grid gap-4 md:grid-cols-3">
+          <label class="field-label">Formato<select id="editProjectFormat" class="input">${option("vertical", "9:16", project.format)}${option("square", "1:1", project.format)}${option("landscape", "16:9", project.format)}</select></label>
+          <label class="field-label">Template<select id="editProjectTemplate" class="input">${option("minimal", "Minimal", project.template)}${option("cinematic", "Cinematic", project.template)}${option("manifesto", "Manifesto", project.template)}</select></label>
+          <label class="field-label">Legendas<select id="editProjectCaptionStyle" class="input">${option("minimal", "Minimal", project.captionStyle)}${option("bold", "Bold", project.captionStyle)}${option("karaoke_basic", "Karaoke basico", project.captionStyle)}${option("manifesto", "Manifesto", project.captionStyle)}</select></label>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button class="primary-button" type="submit">Guardar metadados</button>
+          <button class="secondary-button" type="button" data-cancel-project-edit="${escapeAttr(project.id)}">Cancelar</button>
+        </div>
+      </div>
+    </form>
   `;
 }
 
@@ -533,6 +559,25 @@ function bindSharedEvents() {
       const format = button.dataset.captionFormat;
       if (id && isCaptionExportFormat(format)) exportProjectCaptions(id, format);
     });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-edit-project]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.editProject;
+      if (!id) return;
+      state.pendingDeleteId = undefined;
+      state.editingProjectId = state.editingProjectId === id ? undefined : id;
+      render();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-cancel-project-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingProjectId = undefined;
+      render();
+    });
+  });
+  document.querySelector<HTMLFormElement>("#projectEditForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveProjectMetadataEdit();
   });
   document.querySelector<HTMLButtonElement>("#clearProjects")?.addEventListener("click", () => {
     confirmOrClearProjects();
@@ -1280,6 +1325,34 @@ function reuseProject(id: string) {
   navigate("/create");
 }
 
+async function saveProjectMetadataEdit() {
+  const id = state.editingProjectId;
+  const project = id ? state.projects.find((item) => item.id === id) : undefined;
+  if (!id || !project) return;
+
+  const title = document.querySelector<HTMLInputElement>("#editProjectTitle")?.value.trim() || project.title;
+  const text = document.querySelector<HTMLTextAreaElement>("#editProjectText")?.value.trim() || project.text;
+  const formatValue = document.querySelector<HTMLSelectElement>("#editProjectFormat")?.value;
+  const templateValue = document.querySelector<HTMLSelectElement>("#editProjectTemplate")?.value;
+  const captionStyleValue = document.querySelector<HTMLSelectElement>("#editProjectCaptionStyle")?.value;
+
+  const updated: ProjectRecord = {
+    ...project,
+    title,
+    text,
+    format: isVideoFormat(formatValue) ? formatValue : project.format,
+    template: isRenderTemplate(templateValue) ? templateValue : project.template,
+    captionStyle: isCaptionStyle(captionStyleValue) ? captionStyleValue : project.captionStyle,
+    filename: title === project.title ? project.filename : safeFilename(title, project.filename.split(".").pop() || "webm"),
+  };
+
+  await updateStoredProjectMetadata(updated);
+  state.projects = state.projects.map((item) => (item.id === id ? updated : item));
+  state.editingProjectId = undefined;
+  state.status = "Metadados do projeto atualizados.";
+  render();
+}
+
 async function loadProjectHistory() {
   try {
     state.projects = await listStoredProjects();
@@ -1319,6 +1392,22 @@ async function putStoredProjectMetadata(project: ProjectRecord) {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction("projects", "readwrite");
     tx.objectStore("projects").put({ ...project, url: undefined });
+    tx.addEventListener("complete", () => resolve());
+    tx.addEventListener("error", () => reject(tx.error));
+  });
+  db.close();
+}
+
+async function updateStoredProjectMetadata(project: ProjectRecord) {
+  const db = await openProjectDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    const store = tx.objectStore("projects");
+    const get = store.get(project.id);
+    get.addEventListener("success", () => {
+      const existing = get.result || {};
+      store.put({ ...existing, ...project, url: undefined });
+    });
     tx.addEventListener("complete", () => resolve());
     tx.addEventListener("error", () => reject(tx.error));
   });
